@@ -45,6 +45,7 @@ logs/
 data/uploads/*
 data/reports/*
 data/snapshots/*
+data/sitevisit_fixed.csv
 !data/.gitkeep
 
 # Reports
