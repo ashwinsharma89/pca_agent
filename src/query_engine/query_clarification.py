@@ -1,30 +1,25 @@
 """
 Query Clarification Module - Human-in-the-Loop
 Generates multiple interpretations of user queries for clarification
+Uses Claude Sonnet 4.5 for multi-step agentic reasoning
 """
 import os
 import json
 from typing import List, Dict, Any
-from openai import OpenAI
-from anthropic import Anthropic
 import logging
+from ..config.llm_router import LLMRouter, TaskType
 
 logger = logging.getLogger(__name__)
 
 
 class QueryClarifier:
-    """Generates multiple interpretations of natural language queries."""
+    """Generates multiple interpretations of natural language queries using optimal LLM."""
     
-    def __init__(self, api_key: str = None, use_anthropic: bool = False):
-        """Initialize the query clarifier."""
-        self.use_anthropic = use_anthropic
-        
-        if use_anthropic:
-            self.client = Anthropic(api_key=api_key or os.getenv('ANTHROPIC_API_KEY'))
-            self.model = "claude-3-5-sonnet-20241022"
-        else:
-            self.client = OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
-            self.model = "gpt-4"
+    def __init__(self):
+        """Initialize the query clarifier with LLM router."""
+        # Use Claude Sonnet 4.5 for multi-step agentic reasoning
+        self.client, self.model, self.config = LLMRouter.get_client(TaskType.QUERY_INTERPRETATION)
+        logger.info(f"QueryClarifier initialized with {self.model} for agentic reasoning")
     
     def generate_interpretations(
         self, 
@@ -83,23 +78,14 @@ Make interpretations diverse - cover different aspects like thresholds, comparis
 """
 
         try:
-            if self.use_anthropic:
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=2000,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                content = response.content[0].text
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful data analyst assistant."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7
-                )
-                content = response.choices[0].message.content
+            # Use Claude Sonnet 4.5 via LLM Router for multi-step reasoning
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.config.get("max_tokens", 4096),
+                temperature=self.config.get("temperature", 0.7),
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = response.content[0].text
             
             # Extract JSON from response
             content = content.strip()
@@ -163,23 +149,14 @@ Return ONLY the refined interpretation as a single clear statement.
 """
 
         try:
-            if self.use_anthropic:
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=200,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                refined = response.content[0].text.strip()
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3
-                )
-                refined = response.choices[0].message.content.strip()
+            # Use Claude Sonnet 4.5 for refinement reasoning
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            refined = response.content[0].text.strip()
             
             return refined
             

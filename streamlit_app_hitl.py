@@ -23,7 +23,7 @@ if 'query_tracker' not in st.session_state:
     st.session_state.query_tracker = QueryTracker()
 
 if 'clarifier' not in st.session_state:
-    st.session_state.clarifier = QueryClarifier(use_anthropic=True)
+    st.session_state.clarifier = QueryClarifier()  # Uses LLM Router (Claude Sonnet 4.5)
 
 if 'current_query_id' not in st.session_state:
     st.session_state.current_query_id = None
