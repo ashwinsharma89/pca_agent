@@ -3,7 +3,6 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.7.4
 pydantic-settings==2.1.0
-streamlit
 
 
 # AI/ML
@@ -18,12 +17,12 @@ langsmith==0.1.17
 
 # Image Processing & Vision
 opencv-python-headless==4.10.0.84
-Pillow==11.0.0
+Pillow
 pytesseract==0.3.10
 pdf2image==1.17.0
 
 # Data Processing
-pandas==2.2.0
+pandas>=2.2.0
 numpy==1.26.3
 python-dateutil==2.8.2
 duckdb==0.9.2
@@ -90,7 +89,7 @@ mypy==1.8.0
 ipython==8.20.0
 
 # Streamlit (Demo Dashboard)
-streamlit==1.31.0
+streamlit
 streamlit-aggrid==0.3.4.post3
 streamlit-option-menu==0.3.12
 
