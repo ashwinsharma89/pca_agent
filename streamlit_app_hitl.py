@@ -1,4 +1,11 @@
 """Unified PCA Agent Streamlit app with auto-analysis + HITL Q&A."""
+# At the top of streamlit_app_hitl.py
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+
+from src.query_engine.smart_interpretation import YourClass
+
 import os
 import time
 from datetime import datetime
