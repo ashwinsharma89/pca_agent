@@ -10,7 +10,7 @@ anthropic==0.34.0
 langchain==0.1.6
 langchain-openai==0.0.5
 langchain-anthropic==0.1.1
-langgraph==0.0.206
+langgraph==1.0.3
 langsmith==0.0.87
 
 # Image Processing & Vision

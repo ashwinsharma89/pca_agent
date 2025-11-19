@@ -6,7 +6,32 @@ import duckdb
 import pandas as pd
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
+from anthropic import Anthropic
+import os
 from loguru import logger
+import sys
+
+# Configure logger to also write to file
+logger.add("query_debug.log", rotation="1 MB", level="INFO")
+
+# Try to import Google Gemini
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("google-generativeai not installed. Install with: pip install google-generativeai")
+
+# Try to import Groq (FREE fallback)
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    logger.warning("groq not installed. Install with: pip install groq")
+
+# Try to import DeepSeek (FREE, excellent at coding)
+DEEPSEEK_AVAILABLE = True  # Uses OpenAI-compatible API
 
 
 class NaturalLanguageQueryEngine:
@@ -19,7 +44,49 @@ class NaturalLanguageQueryEngine:
         Args:
             api_key: OpenAI API key for LLM
         """
-        self.client = OpenAI(api_key=api_key)
+        self.openai_client = OpenAI(api_key=api_key)
+        
+        # Setup available models in priority order
+        self.available_models = []
+        
+        # 1. Gemini 2.5 Flash (FREE & FAST)
+        google_key = os.getenv('GOOGLE_API_KEY')
+        if google_key and GEMINI_AVAILABLE:
+            genai.configure(api_key=google_key)
+            self.available_models.append(('gemini', 'gemini-2.5-flash'))
+            logger.info("Tier 1: Gemini 2.5 Flash (FREE)")
+        
+        # 2. DeepSeek (FREE CODING SPECIALIST)
+        deepseek_key = os.getenv('DEEPSEEK_API_KEY')
+        if deepseek_key and DEEPSEEK_AVAILABLE:
+            self.deepseek_client = OpenAI(
+                api_key=deepseek_key,
+                base_url="https://api.deepseek.com"
+            )
+            self.available_models.append(('deepseek', 'deepseek-chat'))
+            logger.info("Tier 2: DeepSeek Chat (FREE CODING SPECIALIST)")
+        
+        # 3. OpenAI GPT-5.1 Codex
+        if self.openai_client:
+            self.available_models.append(('openai', 'gpt-4o'))
+            logger.info("Tier 3: OpenAI GPT-4o")
+        
+        # 4. Claude Sonnet 4.5
+        anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+        if anthropic_key and anthropic_key.startswith('sk-ant-'):
+            self.anthropic_client = Anthropic(api_key=anthropic_key)
+            self.available_models.append(('claude', 'claude-sonnet-4-5-20250929'))
+            logger.info("Tier 4: Claude Sonnet 4.5")
+        
+        # 5. Groq (ULTIMATE FREE FALLBACK)
+        groq_key = os.getenv('GROQ_API_KEY')
+        if groq_key and GROQ_AVAILABLE:
+            self.groq_client = Groq(api_key=groq_key)
+            self.available_models.append(('groq', 'llama-3.3-70b-versatile'))
+            logger.info("Tier 5: Groq Llama 3.3 70B (FREE & SUPER FAST)")
+        
+        logger.info(f"Available models: {[m[0] for m in self.available_models]}")
+        
         self.conn = None
         self.schema_info = None
         logger.info("Initialized NaturalLanguageQueryEngine")
@@ -67,6 +134,13 @@ class NaturalLanguageQueryEngine:
         """
         schema_description = self._get_schema_description()
         
+        logger.info(f"=== GENERATING SQL FOR QUESTION: {question} ===")
+        logger.info(f"Schema info available: {self.schema_info is not None}")
+        if self.schema_info:
+            logger.info(f"Columns: {self.schema_info.get('columns', [])}")
+        logger.info(f"Schema description length: {len(schema_description)} chars")
+        logger.info(f"Schema description preview: {schema_description[:300]}...")
+        
         prompt = f"""You are a SQL expert specializing in marketing campaign analytics. Convert the following natural language question into a DuckDB SQL query.
 
 Database Schema:
@@ -86,23 +160,57 @@ Examples:
 - ROAS = SUM(Revenue) / NULLIF(SUM(Spend), 0)  [or use Conversion_Value if Revenue not available]
 - Conversion_Rate = (SUM(Conversions) / NULLIF(SUM(Clicks), 0)) * 100
 
-⏰ TEMPORAL COMPARISON PATTERNS:
+⏰ TEMPORAL COMPARISON PATTERNS (ANCHOR ON DATA, NOT CURRENT_DATE):
 
-Understand these time phrases and map to SQL:
-- "last 2 weeks" → WHERE Date >= CURRENT_DATE - INTERVAL 14 DAY
-- "previous 2 weeks" → WHERE Date >= CURRENT_DATE - INTERVAL 28 DAY AND Date < CURRENT_DATE - INTERVAL 14 DAY
-- "last month" → WHERE Date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL 1 MONTH)
-- "last 2 months" → WHERE Date >= CURRENT_DATE - INTERVAL 60 DAY
-- "last 6 months" → WHERE Date >= CURRENT_DATE - INTERVAL 180 DAY
-- "last 2 years" → WHERE Date >= CURRENT_DATE - INTERVAL 730 DAY
-- "couple of months" → treat as 2 months (60 days)
-- "week-over-week" → GROUP BY DATE_TRUNC('week', Date)
-- "month-over-month" → GROUP BY DATE_TRUNC('month', Date)
-- "Q3 vs Q2" → use QUARTER(Date) or DATE_TRUNC('quarter', Date)
-- "year-over-year" → compare same period across different years using YEAR(Date)
+Always anchor relative time windows on the *latest date present in the data*, not on CURRENT_DATE.
 
-For comparisons ("last X vs previous X"):
-- Use CASE WHEN to create period labels
+1) Find the campaign end date (max_date) from the table first, using a CTE pattern like:
+
+   WITH bounds AS (
+       SELECT MAX(Date) AS max_date
+       FROM campaigns
+   )
+
+2) Then express natural language time windows relative to bounds.max_date (campaign life):
+
+- "last 2 weeks"      -> Date >= max_date - INTERVAL 14 DAY
+- "previous 2 weeks"  -> Date >= max_date - INTERVAL 28 DAY AND Date < max_date - INTERVAL 14 DAY
+- "last month"        -> Date >= DATE_TRUNC('month', max_date - INTERVAL 1 MONTH)
+- "last 2 months"     -> Date >= max_date - INTERVAL 2 MONTH
+- "last 6 months"     -> Date >= max_date - INTERVAL 6 MONTH
+- "last 2 years"      -> Date >= max_date - INTERVAL 2 YEAR
+- "couple of months"  -> treat as 2 months (use 2 MONTH window)
+- "week-over-week"    -> GROUP BY DATE_TRUNC('week', Date)
+- "month-over-month"  -> GROUP BY DATE_TRUNC('month', Date)
+- "Q3 vs Q2"          -> use QUARTER(Date) or DATE_TRUNC('quarter', Date)
+- "year-over-year"    -> compare same period across different years using YEAR(Date)
+
+For comparisons ("last X vs previous X") you should:
+- Use a CTE that joins every row with max_date from bounds
+- Create a period label using CASE WHEN, for example for last 2 months vs previous 2 months:
+
+   WITH bounds AS (
+       SELECT MAX(Date) AS max_date FROM campaigns
+   ),
+   periods AS (
+       SELECT
+           c.*,
+           CASE
+               WHEN Date >= max_date - INTERVAL 2 MONTH
+                    THEN 'last_period'
+               WHEN Date >= max_date - INTERVAL 4 MONTH
+                AND Date <  max_date - INTERVAL 2 MONTH
+                    THEN 'previous_period'
+               ELSE 'other'
+           END AS period
+       FROM campaigns c
+       CROSS JOIN bounds
+   )
+   SELECT period, ...
+   FROM periods
+   WHERE period IN ('last_period', 'previous_period')
+   GROUP BY period;
+
 - Calculate metrics separately for each period
 - Use CTEs or subqueries for clarity
 
@@ -113,6 +221,42 @@ For comparisons ("last X vs previous X"):
 - Segment analysis: GROUP BY demographic/audience columns
 - Creative analysis: GROUP BY creative_variant, ad_copy, subject_line columns
 - Time analysis: GROUP BY hour, day_of_week, or use DATE_TRUNC
+
+🎯 PERFORMANCE ANALYSIS - CRITICAL:
+
+When user asks about "performance", "best performing", "top performing", or "sort by performance", you MUST include ALL applicable KPIs:
+
+✓ Raw Metrics (ALWAYS include):
+  - Total_Spend = SUM("Total Spent")
+  - Total_Impressions = SUM(Impressions)
+  - Total_Clicks = SUM(Clicks)
+  - Total_Conversions = SUM("Site Visit") or SUM(Conversions) [if exists]
+
+✓ Calculated KPIs (ALWAYS include all applicable):
+  - CTR (Click-Through Rate) = ROUND((SUM(Clicks) / NULLIF(SUM(Impressions), 0)) * 100, 2)
+  - CPC (Cost Per Click) = ROUND(SUM("Total Spent") / NULLIF(SUM(Clicks), 0), 2)
+  - CPM (Cost Per Mille) = ROUND((SUM("Total Spent") / NULLIF(SUM(Impressions), 0)) * 1000, 2)
+  - CPA (Cost Per Acquisition) = ROUND(SUM("Total Spent") / NULLIF(SUM("Site Visit"), 0), 2) [if conversions exist]
+  - Conversion_Rate = ROUND((SUM("Site Visit") / NULLIF(SUM(Clicks), 0)) * 100, 2) [if conversions exist]
+  - ROAS (Return on Ad Spend) = ROUND(SUM(Revenue) / NULLIF(SUM("Total Spent"), 0), 2) [if Revenue exists]
+
+✓ ORDER BY: Use the most relevant metric (CTR, ROAS, Conversion_Rate, or CPA depending on context)
+
+❌ NEVER return just the dimension name (Channel, Funnel, etc.) without metrics
+❌ NEVER return only one calculated metric - include ALL applicable KPIs
+
+Examples:
+1. "which is the best performing channel" should include:
+   - Channel
+   - Total_Spend, Total_Impressions, Total_Clicks, Total_Conversions
+   - CTR, CPC, CPM, CPA, Conversion_Rate, ROAS (if applicable)
+   - ORDER BY Conversion_Rate DESC or ROAS DESC (most relevant for "best")
+   - LIMIT 1 (if asking for single best)
+
+2. "sort by funnel performance" should include:
+   - Funnel
+   - All raw metrics + all calculated KPIs
+   - ORDER BY the most relevant metric
 
 🎯 ADVANCED PATTERNS:
 
@@ -187,25 +331,117 @@ Question: {question}
 
 SQL Query:"""
         
-        response = self.client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a SQL expert that converts natural language to SQL queries. Return only the SQL query without any markdown formatting or explanations."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=500
-        )
+        logger.info(f"FULL PROMPT LENGTH: {len(prompt)} chars")
+        logger.info(f"PROMPT PREVIEW (first 500 chars):\n{prompt[:500]}")
+        logger.info(f"PROMPT END (last 200 chars):\n{prompt[-200:]}")
         
-        sql_query = response.choices[0].message.content.strip()
+        # Try each available model in order
+        sql_query = None
+        last_error = None
+        
+        for provider, model_name in self.available_models:
+            try:
+                logger.info(f"Attempting to use {provider} ({model_name})...")
+                
+                if provider == 'claude':
+                    response = self.anthropic_client.messages.create(
+                        model=model_name,
+                        max_tokens=1000,
+                        temperature=0.1,
+                        messages=[{
+                            "role": "user",
+                            "content": f"You are a SQL expert. Generate ONLY the SQL query, no explanations or markdown.\n\n{prompt}"
+                        }]
+                    )
+                    sql_query = response.content[0].text.strip()
+                    self._last_model_used = f"{provider} ({model_name})"
+                    logger.info(f"✅ Successfully used {provider}")
+                    break
+                    
+                elif provider == 'gemini':
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(
+                        f"You are a SQL expert. Generate ONLY the SQL query, no explanations or markdown.\n\n{prompt}",
+                        generation_config=genai.GenerationConfig(
+                            temperature=0.1,
+                            max_output_tokens=1000
+                        )
+                    )
+                    sql_query = response.text.strip()
+                    self._last_model_used = f"{provider} ({model_name})"
+                    logger.info(f"✅ Successfully used {provider} (FREE)")
+                    break
+                    
+                elif provider == 'openai':
+                    response = self.openai_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are a SQL expert. Generate ONLY the SQL query, no explanations or markdown."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=1000
+                    )
+                    sql_query = response.choices[0].message.content.strip()
+                    self._last_model_used = f"{provider} ({model_name})"
+                    logger.info(f"✅ Successfully used {provider}")
+                    break
+                    
+                elif provider == 'groq':
+                    response = self.groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are a SQL expert. Generate ONLY the SQL query, no explanations or markdown."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=1000
+                    )
+                    sql_query = response.choices[0].message.content.strip()
+                    self._last_model_used = f"{provider} ({model_name})"
+                    logger.info(f"✅ Successfully used {provider} (FREE & FAST)")
+                    break
+                    
+                elif provider == 'deepseek':
+                    response = self.deepseek_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are a SQL expert. Generate ONLY the SQL query, no explanations or markdown."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=1000
+                    )
+                    sql_query = response.choices[0].message.content.strip()
+                    self._last_model_used = f"{provider} ({model_name})"
+                    logger.info(f"✅ Successfully used {provider} (FREE CODING SPECIALIST)")
+                    break
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"❌ {provider} failed: {e}")
+                continue
+        
+        if not sql_query:
+            logger.error(f"All models failed. Last error: {last_error}")
+            raise Exception(f"All LLM providers failed. Last error: {last_error}")
+        logger.info(f"RAW LLM RESPONSE: {sql_query}")
         
         # Clean up the query (remove markdown code blocks if present)
         sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+        logger.info(f"AFTER CLEANUP: {sql_query}")
         
         # Sanitize SQL query to fix common issues
         sql_query = self._sanitize_sql(sql_query)
+        logger.info(f"AFTER SANITIZE: {sql_query}")
         
-        logger.info(f"Generated SQL: {sql_query}")
+        # Validate SQL is not a dummy query
+        if sql_query.upper().strip() == "SELECT 1" or not sql_query or len(sql_query) < 10:
+            logger.error(f"LLM returned invalid/dummy query: '{sql_query}'")
+            logger.error(f"Question was: {question}")
+            logger.error(f"Schema had {len(self.schema_info.get('columns', []))} columns")
+            raise ValueError(f"Failed to generate valid SQL for question: {question}. Got: {sql_query}")
+        
         return sql_query
     
     def _sanitize_sql(self, sql_query: str) -> str:
@@ -248,6 +484,16 @@ SQL Query:"""
             
             for pattern, replacement in patterns:
                 sql_query = re.sub(pattern, replacement, sql_query, flags=re.IGNORECASE)
+
+            # If the schema has no Revenue column, replace any ROAS expression that
+            # references SUM(Revenue) with a NULL placeholder to avoid binder errors.
+            if 'Revenue' not in columns:
+                sql_query = re.sub(
+                    r'ROUND\s*\(\s*SUM\s*\(\s*Revenue\s*\)[^)]*\)\s+AS\s+ROAS',
+                    'NULL AS ROAS',
+                    sql_query,
+                    flags=re.IGNORECASE,
+                )
         
         return sql_query
     
@@ -284,11 +530,35 @@ SQL Query:"""
         try:
             start_time = time.time()
             
-            # Generate SQL
+            # 1) Generate SQL with normal provider priority
             sql_query = self.generate_sql(question)
             
-            # Execute query
+            # 2) Execute query
             results = self.execute_query(sql_query)
+            
+            # 3) If no rows returned, optionally try a semantic fallback with DeepSeek
+            if results.empty and any(m[0] == 'deepseek' for m in self.available_models):
+                logger.warning(
+                    "Primary model returned no rows. Attempting DeepSeek fallback for better SQL."
+                )
+                original_models = list(self.available_models)
+                try:
+                    # Prioritize DeepSeek for this retry only
+                    deepseek_first = [m for m in original_models if m[0] == 'deepseek']
+                    others = [m for m in original_models if m[0] != 'deepseek']
+                    if deepseek_first:
+                        self.available_models = deepseek_first + others
+                        fallback_sql = self.generate_sql(question)
+                        fallback_results = self.execute_query(fallback_sql)
+                        if not fallback_results.empty:
+                            logger.info("DeepSeek fallback produced non-empty results. Using fallback SQL.")
+                            sql_query = fallback_sql
+                            results = fallback_results
+                except Exception as fe:
+                    logger.warning(f"DeepSeek semantic fallback failed: {fe}")
+                finally:
+                    # Restore original provider order for future calls
+                    self.available_models = original_models
             
             # Generate natural language answer
             answer = self._generate_answer(question, results)
@@ -301,6 +571,7 @@ SQL Query:"""
                 "results": results,
                 "answer": answer,
                 "execution_time": execution_time,
+                "model_used": getattr(self, '_last_model_used', 'unknown'),
                 "success": True,
                 "error": None
             }
@@ -429,17 +700,73 @@ Query Results:
 Provide an informative answer with key takeaways:"""
             max_tokens = 300
         
-        response = self.client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=max_tokens
-        )
+        # Use same fallback system as SQL generation
+        for provider, model_name in self.available_models:
+            try:
+                if provider == 'claude':
+                    response = self.anthropic_client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        temperature=0.7,
+                        messages=[{
+                            "role": "user",
+                            "content": f"{system_prompt}\n\n{user_prompt}"
+                        }]
+                    )
+                    return response.content[0].text.strip()
+                    
+                elif provider == 'gemini':
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(
+                        f"{system_prompt}\n\n{user_prompt}",
+                        generation_config=genai.GenerationConfig(
+                            temperature=0.7,
+                            max_output_tokens=max_tokens
+                        )
+                    )
+                    return response.text.strip()
+                    
+                elif provider == 'openai':
+                    response = self.openai_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=max_tokens
+                    )
+                    return response.choices[0].message.content.strip()
+                    
+                elif provider == 'groq':
+                    response = self.groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=max_tokens
+                    )
+                    return response.choices[0].message.content.strip()
+                    
+                elif provider == 'deepseek':
+                    response = self.deepseek_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=max_tokens
+                    )
+                    return response.choices[0].message.content.strip()
+                    
+            except Exception as e:
+                logger.warning(f"Insights generation failed with {provider}: {e}")
+                continue
         
-        return response.choices[0].message.content.strip()
+        return "Unable to generate insights - all AI providers failed."
     
     def get_suggested_questions(self) -> List[str]:
         """Get suggested questions based on the data schema."""
