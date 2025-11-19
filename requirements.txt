@@ -3,7 +3,7 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.7.4
 pydantic-settings==2.1.0
-streamlit
+
 
 
 # AI/ML
@@ -90,7 +90,7 @@ mypy==1.8.0
 ipython==8.20.0
 
 # Streamlit (Demo Dashboard)
-streamlit==1.31.0
+streamlit
 streamlit-aggrid==0.3.4.post3
 streamlit-option-menu==0.3.12
 
