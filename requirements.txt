@@ -9,15 +9,16 @@ streamlit
 # AI/ML
 openai==1.12.0
 anthropic==0.34.0
-langchain==0.1.6
-langchain-openai==0.0.5
-langchain-anthropic==0.1.1
-langgraph==0.0.69
-langsmith==0.0.87
+langchain==0.1.16
+langchain-core==0.1.52
+langchain-openai==0.0.8
+langchain-anthropic==0.1.4
+langgraph==0.0.32
+langsmith==0.1.17
 
 # Image Processing & Vision
-opencv-python==4.9.0.80
-Pillow==10.3.0
+opencv-python-headless==4.10.0.84
+Pillow==11.0.0
 pytesseract==0.3.10
 pdf2image==1.17.0
 
