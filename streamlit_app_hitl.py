@@ -2,10 +2,22 @@
 # At the top of streamlit_app_hitl.py
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent))
+import os
 
-from src.query_engine.smart_interpretation import YourClass
+# Add the project root to Python path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
+# Debug: Print what files exist
+print("Project root:", project_root)
+print("Files in src/query_engine/:")
+query_engine_path = project_root / "src" / "query_engine"
+if query_engine_path.exists():
+    print(os.listdir(query_engine_path))
+else:
+    print("Directory doesn't exist!")
+
+# Then your imports...
 import os
 import time
 from datetime import datetime
