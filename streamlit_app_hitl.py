@@ -1453,7 +1453,59 @@ with tab_hitl:
 
             if result_data.get("answer"):
                 st.markdown("### 💡 Insight")
-                st.write(result_data["answer"])
+                
+                # Format the insight professionally
+                insight_text = result_data["answer"]
+                
+                # Clean up formatting issues
+                import html
+                import re
+                
+                # Escape HTML to prevent rendering issues
+                insight_text = html.escape(insight_text)
+                
+                # Convert markdown-style formatting to HTML
+                # Bold: **text** or __text__ -> <strong>text</strong>
+                insight_text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', insight_text)
+                insight_text = re.sub(r'__(.*?)__', r'<strong>\1</strong>', insight_text)
+                
+                # Italic: *text* or _text_ -> <em>text</em> (but avoid breaking numbers)
+                insight_text = re.sub(r'(?<!\w)\*([^*]+?)\*(?!\w)', r'<em>\1</em>', insight_text)
+                insight_text = re.sub(r'(?<!\w)_([^_]+?)_(?!\w)', r'<em>\1</em>', insight_text)
+                
+                # Numbers and percentages: make them stand out
+                insight_text = re.sub(r'(\d+\.?\d*%)', r'<span style="color: #60a5fa; font-weight: 600;">\1</span>', insight_text)
+                insight_text = re.sub(r'(\$[\d,]+\.?\d*)', r'<span style="color: #34d399; font-weight: 600;">\1</span>', insight_text)
+                
+                # Numbered lists: format properly
+                insight_text = re.sub(r'^(\d+)\.\s+', r'<br><strong>\1.</strong> ', insight_text, flags=re.MULTILINE)
+                
+                # Bullet points
+                insight_text = re.sub(r'^[•\-]\s+', r'<br>• ', insight_text, flags=re.MULTILINE)
+                
+                # Preserve line breaks
+                insight_text = insight_text.replace('\n', '<br>')
+                
+                # Create a professional card for the insight
+                insight_html = f"""
+                <div style='
+                    background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
+                    backdrop-filter: blur(16px);
+                    padding: 1.75rem;
+                    border-left: 4px solid #3b82f6;
+                    border-radius: 12px;
+                    margin: 1rem 0;
+                    color: #e2e8f0;
+                    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+                    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    font-size: 0.95rem;
+                    line-height: 1.8;
+                    letter-spacing: 0.01em;
+                '>
+                    {insight_text}
+                </div>
+                """
+                st.markdown(insight_html, unsafe_allow_html=True)
 
             col_fb1, col_fb2, col_fb3 = st.columns(3)
             if col_fb1.button("👍 Helpful"):
