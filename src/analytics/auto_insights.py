@@ -455,30 +455,100 @@ Focus on recommendations that can be implemented immediately with clear tactical
         return recommendations
     
     def _identify_opportunities(self, df: pd.DataFrame, metrics: Dict) -> List[Dict[str, Any]]:
-        """Identify growth opportunities."""
+        """Identify growth opportunities across multiple KPIs."""
         opportunities = []
         
         # Get column names
         spend_col = self._get_column(df, 'spend')
+        conv_col = self._get_column(df, 'conversions')
+        clicks_col = self._get_column(df, 'clicks')
+        impr_col = self._get_column(df, 'impressions')
         
-        # High ROAS campaigns that could scale
+        # 1. High ROAS campaigns that could scale
         if 'ROAS' in df.columns and spend_col:
             try:
                 high_performers = df[df['ROAS'] > 4.0].sort_values('ROAS', ascending=False)
-                for _, row in high_performers.head(3).iterrows():
+                for _, row in high_performers.head(2).iterrows():
                     opportunities.append({
-                        "type": "Scale Winner",
+                        "type": "Scale Winner (ROAS)",
                         "campaign": row.get('Campaign_Name', 'Unknown'),
                         "platform": row.get('Platform', 'Unknown'),
                         "current_roas": float(row['ROAS']),
                         "current_spend": float(row[spend_col]),
-                        "opportunity": f"Increase budget by 50-100% to scale this high-performing campaign",
+                        "opportunity": f"ROAS of {float(row['ROAS']):.2f}x - Increase budget by 50-100% to scale",
                         "potential_impact": f"Could generate ${float(row[spend_col]) * 0.5 * float(row['ROAS']):,.0f} additional revenue"
                     })
             except Exception as e:
-                logger.warning(f"Could not identify scale winners: {e}")
+                logger.warning(f"Could not identify ROAS scale winners: {e}")
         
-        # Underutilized platforms
+        # 2. High CTR campaigns (engagement opportunity)
+        if 'CTR' in df.columns and spend_col:
+            try:
+                high_ctr = df[df['CTR'] > 3.0].sort_values('CTR', ascending=False)
+                for _, row in high_ctr.head(2).iterrows():
+                    opportunities.append({
+                        "type": "High Engagement (CTR)",
+                        "campaign": row.get('Campaign_Name', 'Unknown'),
+                        "platform": row.get('Platform', 'Unknown'),
+                        "current_ctr": float(row['CTR']),
+                        "opportunity": f"CTR of {float(row['CTR']):.2f}% shows strong audience engagement - optimize for conversions",
+                        "potential_impact": "Improve conversion rate to maximize this engaged traffic"
+                    })
+            except Exception as e:
+                logger.warning(f"Could not identify CTR opportunities: {e}")
+        
+        # 3. Low CPC with good conversion rate (efficiency opportunity)
+        if 'CPC' in df.columns and 'Conversion_Rate' in df.columns and spend_col:
+            try:
+                efficient = df[(df['CPC'] < df['CPC'].median()) & (df['Conversion_Rate'] > df['Conversion_Rate'].median())]
+                for _, row in efficient.head(2).iterrows():
+                    opportunities.append({
+                        "type": "Efficient Performer (CPC + Conv Rate)",
+                        "campaign": row.get('Campaign_Name', 'Unknown'),
+                        "platform": row.get('Platform', 'Unknown'),
+                        "current_cpc": float(row['CPC']),
+                        "current_conv_rate": float(row['Conversion_Rate']),
+                        "opportunity": f"Low CPC (${float(row['CPC']):.2f}) + High Conv Rate ({float(row['Conversion_Rate']):.2f}%) = Scale opportunity",
+                        "potential_impact": "Efficient acquisition cost with strong conversion - ideal for scaling"
+                    })
+            except Exception as e:
+                logger.warning(f"Could not identify CPC/Conv Rate opportunities: {e}")
+        
+        # 4. High impression share but low CTR (creative opportunity)
+        if impr_col and 'CTR' in df.columns:
+            try:
+                high_impr_low_ctr = df[(df[impr_col] > df[impr_col].quantile(0.75)) & (df['CTR'] < 1.5)]
+                for _, row in high_impr_low_ctr.head(2).iterrows():
+                    opportunities.append({
+                        "type": "Creative Optimization (Impressions vs CTR)",
+                        "campaign": row.get('Campaign_Name', 'Unknown'),
+                        "platform": row.get('Platform', 'Unknown'),
+                        "impressions": int(row[impr_col]),
+                        "current_ctr": float(row['CTR']),
+                        "opportunity": f"High impressions ({int(row[impr_col]):,}) but low CTR ({float(row['CTR']):.2f}%) - refresh creative",
+                        "potential_impact": "Improving CTR to 2.5% could double clicks without additional spend"
+                    })
+            except Exception as e:
+                logger.warning(f"Could not identify creative opportunities: {e}")
+        
+        # 5. Good CTR but low conversion rate (landing page opportunity)
+        if 'CTR' in df.columns and 'Conversion_Rate' in df.columns:
+            try:
+                good_ctr_low_conv = df[(df['CTR'] > 2.0) & (df['Conversion_Rate'] < df['Conversion_Rate'].median())]
+                for _, row in good_ctr_low_conv.head(2).iterrows():
+                    opportunities.append({
+                        "type": "Landing Page Optimization (CTR vs Conv Rate)",
+                        "campaign": row.get('Campaign_Name', 'Unknown'),
+                        "platform": row.get('Platform', 'Unknown'),
+                        "current_ctr": float(row['CTR']),
+                        "current_conv_rate": float(row['Conversion_Rate']),
+                        "opportunity": f"Good CTR ({float(row['CTR']):.2f}%) but low Conv Rate ({float(row['Conversion_Rate']):.2f}%) - optimize landing page",
+                        "potential_impact": "Improving conversion rate could 2x conversions with same traffic"
+                    })
+            except Exception as e:
+                logger.warning(f"Could not identify landing page opportunities: {e}")
+        
+        # 6. Underutilized platforms with strong KPIs
         if 'Platform' in df.columns and spend_col:
             try:
                 platform_col = df['Platform']
@@ -489,50 +559,64 @@ Focus on recommendations that can be implemented immediately with clear tactical
                 temp_df['_Platform'] = platform_col
                 platform_spend = temp_df.groupby('_Platform')[spend_col].sum()
                 total_spend = platform_spend.sum()
+                
+                for platform, spend in platform_spend.items():
+                    if spend / total_spend < 0.10:  # Less than 10% of budget
+                        platform_data = df[df['Platform'] == platform]
+                        kpis = []
+                        if 'ROAS' in df.columns:
+                            avg_roas = platform_data['ROAS'].mean()
+                            if avg_roas > 3.5:
+                                kpis.append(f"ROAS {avg_roas:.2f}x")
+                        if 'CTR' in df.columns:
+                            avg_ctr = platform_data['CTR'].mean()
+                            if avg_ctr > 2.0:
+                                kpis.append(f"CTR {avg_ctr:.2f}%")
+                        if 'Conversion_Rate' in df.columns:
+                            avg_conv = platform_data['Conversion_Rate'].mean()
+                            if avg_conv > platform_data['Conversion_Rate'].median():
+                                kpis.append(f"Conv Rate {avg_conv:.2f}%")
+                        
+                        if kpis:
+                            opportunities.append({
+                                "type": "Underutilized Platform",
+                                "platform": platform,
+                                "current_spend": float(spend),
+                                "current_share": f"{(spend/total_spend)*100:.1f}%",
+                                "opportunity": f"Only {(spend/total_spend)*100:.1f}% of budget but strong KPIs: {', '.join(kpis)}",
+                                "potential_impact": "Increase allocation to improve overall portfolio efficiency"
+                            })
             except Exception as e:
                 logger.warning(f"Could not calculate platform opportunities: {e}")
-                total_spend = 0
-            
-            for platform, spend in platform_spend.items():
-                if spend / total_spend < 0.10:  # Less than 10% of budget
-                    avg_roas = df[df['Platform'] == platform]['ROAS'].mean()
-                    if avg_roas > 3.5:
-                        opportunities.append({
-                            "type": "Underutilized Platform",
-                            "platform": platform,
-                            "current_spend": float(spend),
-                            "current_share": f"{(spend/total_spend)*100:.1f}%",
-                            "avg_roas": float(avg_roas),
-                            "opportunity": f"Increase {platform} budget - showing strong ROAS with minimal investment",
-                            "potential_impact": "Could improve overall portfolio efficiency"
-                        })
         
-        # Seasonal opportunities
+        # 7. Seasonal/temporal opportunities
         if 'Date' in df.columns:
             try:
-                df['Month'] = pd.to_datetime(df['Date']).dt.month
+                df_copy = df.copy()
+                df_copy['Month'] = pd.to_datetime(df_copy['Date']).dt.month
                 
-                # Build aggregation dict based on available columns
+                # Analyze multiple KPIs by month
                 agg_dict = {}
                 if 'ROAS' in df.columns:
                     agg_dict['ROAS'] = 'mean'
-                
-                # Get conversions column
-                conv_col = self._get_column(df, 'conversions')
+                if 'CTR' in df.columns:
+                    agg_dict['CTR'] = 'mean'
                 if conv_col:
                     agg_dict[conv_col] = 'sum'
                 
-                if agg_dict and 'ROAS' in agg_dict:
-                    monthly_performance = df.groupby('Month').agg(agg_dict)
+                if agg_dict:
+                    monthly_performance = df_copy.groupby('Month').agg(agg_dict)
                     
-                    best_months = monthly_performance.nlargest(2, 'ROAS')
-                    for month, row in best_months.iterrows():
+                    # Find best month by primary metric
+                    if 'ROAS' in agg_dict:
+                        best_month = monthly_performance['ROAS'].idxmax()
+                        best_roas = monthly_performance.loc[best_month, 'ROAS']
                         opportunities.append({
                             "type": "Seasonal Opportunity",
-                            "period": f"Month {month}",
-                            "avg_roas": float(row['ROAS']),
-                            "opportunity": f"Historical data shows strong performance in this period",
-                            "potential_impact": "Plan increased investment for similar future periods"
+                            "period": f"Month {best_month}",
+                            "avg_roas": float(best_roas),
+                            "opportunity": f"Historical peak performance in Month {best_month} (ROAS {best_roas:.2f}x)",
+                            "potential_impact": "Plan increased investment 2-3 weeks before this period"
                         })
             except Exception as e:
                 logger.warning(f"Could not calculate seasonal opportunities: {e}")
@@ -540,34 +624,73 @@ Focus on recommendations that can be implemented immediately with clear tactical
         return opportunities
     
     def _assess_risks(self, df: pd.DataFrame, metrics: Dict) -> List[Dict[str, Any]]:
-        """Assess risks and red flags."""
+        """Assess risks and red flags across multiple KPIs."""
         risks = []
         
-        # Low ROAS campaigns
-        if 'ROAS' in df.columns:
+        spend_col = self._get_column(df, 'spend')
+        
+        # 1. Low ROAS campaigns
+        if 'ROAS' in df.columns and spend_col:
             poor_performers = df[df['ROAS'] < 2.5]
             if len(poor_performers) > 0:
-                spend_col = self._get_column(df, 'spend')
-                if spend_col:
-                    total_waste = poor_performers[spend_col].sum()
-                    risks.append({
-                        "severity": "High",
-                        "risk": "Underperforming Campaigns",
-                        "details": f"{len(poor_performers)} campaigns with ROAS below 2.5",
-                        "impact": f"${total_waste:,.0f} at risk",
-                        "action": "Review and optimize or pause these campaigns immediately"
-                    })
+                total_waste = poor_performers[spend_col].sum()
+                risks.append({
+                    "severity": "High",
+                    "risk": "Low ROAS Campaigns",
+                    "details": f"{len(poor_performers)} campaigns with ROAS below 2.5x",
+                    "impact": f"${total_waste:,.0f} at risk",
+                    "action": "Review and optimize or pause these campaigns immediately"
+                })
         
-        # High CPA campaigns
-        if 'CPA' in df.columns:
+        # 2. High CPA campaigns
+        if 'CPA' in df.columns and spend_col:
             high_cpa = df[df['CPA'] > df['CPA'].quantile(0.75)]
             if len(high_cpa) > 0:
+                avg_high_cpa = high_cpa['CPA'].mean()
                 risks.append({
                     "severity": "Medium",
                     "risk": "High Cost Per Acquisition",
-                    "details": f"{len(high_cpa)} campaigns with CPA in top 25%",
+                    "details": f"{len(high_cpa)} campaigns with CPA in top 25% (avg ${avg_high_cpa:.2f})",
                     "impact": "Reducing efficiency and profitability",
                     "action": "Optimize targeting, creative, or bidding strategy"
+                })
+        
+        # 3. Low CTR (poor ad relevance/creative)
+        if 'CTR' in df.columns:
+            low_ctr = df[df['CTR'] < 1.0]
+            if len(low_ctr) > 0:
+                risks.append({
+                    "severity": "Medium",
+                    "risk": "Low Click-Through Rate",
+                    "details": f"{len(low_ctr)} campaigns with CTR below 1.0%",
+                    "impact": "Poor ad relevance or creative fatigue - wasting impressions",
+                    "action": "Refresh ad creative, improve targeting, or test new messaging"
+                })
+        
+        # 4. High CPC (overpaying for clicks)
+        if 'CPC' in df.columns and spend_col:
+            high_cpc = df[df['CPC'] > df['CPC'].quantile(0.90)]
+            if len(high_cpc) > 0:
+                avg_high_cpc = high_cpc['CPC'].mean()
+                total_high_cpc_spend = high_cpc[spend_col].sum()
+                risks.append({
+                    "severity": "Medium",
+                    "risk": "High Cost Per Click",
+                    "details": f"{len(high_cpc)} campaigns with CPC in top 10% (avg ${avg_high_cpc:.2f})",
+                    "impact": f"${total_high_cpc_spend:,.0f} spend at elevated CPC",
+                    "action": "Review bidding strategy, improve quality score, or adjust targeting"
+                })
+        
+        # 5. Low conversion rate (funnel drop-off)
+        if 'Conversion_Rate' in df.columns:
+            low_conv = df[df['Conversion_Rate'] < df['Conversion_Rate'].quantile(0.25)]
+            if len(low_conv) > 0:
+                risks.append({
+                    "severity": "High",
+                    "risk": "Low Conversion Rate",
+                    "details": f"{len(low_conv)} campaigns with Conv Rate in bottom 25%",
+                    "impact": "Traffic not converting - landing page or offer issues",
+                    "action": "Optimize landing pages, improve offer, or refine audience targeting"
                 })
         
         # Platform concentration risk
