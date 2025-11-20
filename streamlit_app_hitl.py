@@ -1,12 +1,14 @@
 """Unified PCA Agent Streamlit app with auto-analysis + HITL Q&A."""
 # At the top of streamlit_app_hitl.py
 import sys
+import os
 from pathlib import Path
 
-# Add the project root to Python path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
-import os
+# Add both current directory and parent to Python path for Streamlit Cloud
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+sys.path.insert(0, os.path.join(current_dir, 'src'))
+
 import streamlit as st
 
 # DELETE OR COMMENT OUT THESE LINES (11-17):
