@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 from src.analytics import MediaAnalyticsExpert
 from src.evaluation.query_tracker import QueryTracker
 from src.query_engine.nl_to_sql import NaturalLanguageQueryEngine
+from src.visualization import SmartChartGenerator
 #from src.query_engine.smart_interpretation import SmartQueryInterpreter
 #from src.orchestration.query_orchestrator import QueryOrchestrator
 
@@ -164,8 +165,7 @@ def init_state():
         "interpretations": None,
         "selected_interpretation": None,
         "query_engine": None,
-        "session_id": str(datetime.now().timestamp()),
-    }
+        "session_id": str(datetime.now().timestamp()),\r\n        "chart_generator": SmartChartGenerator(),\r\n        "overview_charts": None,\r\n        "last_result": None,\r\n    }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
