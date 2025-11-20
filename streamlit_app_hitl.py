@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 from src.analytics import MediaAnalyticsExpert
 from src.evaluation.query_tracker import QueryTracker
 from src.query_engine.nl_to_sql import NaturalLanguageQueryEngine
-from src.query_engine.smart_interpretation import SmartQueryInterpreter
+#from src.query_engine.smart_interpretation import SmartQueryInterpreter
 from src.orchestration.query_orchestrator import QueryOrchestrator
 
 load_dotenv()
@@ -158,7 +158,7 @@ def init_state():
         "df": None,
         "df_loaded_from_cache": False,
         "query_tracker": QueryTracker(),
-        "interpreter": SmartQueryInterpreter(),
+        "interpreter": None,
         "orchestrator": None,
         "current_query_id": None,
         "interpretations": None,
