@@ -301,14 +301,19 @@ with tab_auto:
 
         if input_method == "📊 CSV Data":
             uploaded_file = st.file_uploader(
-                "Upload your campaign CSV",
-                type=["csv"],
+                "Upload your campaign data (CSV or Excel)",
+                type=["csv", "xlsx", "xls"],
                 help="Include Campaign_Name, Platform, Spend, ROAS, etc.",
             )
 
             if uploaded_file:
                 try:
-                    df = pd.read_csv(uploaded_file)
+                    # Read file based on extension
+                    file_extension = uploaded_file.name.split('.')[-1].lower()
+                    if file_extension in ['xlsx', 'xls']:
+                        df = pd.read_excel(uploaded_file)
+                    else:
+                        df = pd.read_csv(uploaded_file)
                     st.session_state.df = df
                     try:
                         df.to_csv(LAST_CSV_PATH, index=False)
