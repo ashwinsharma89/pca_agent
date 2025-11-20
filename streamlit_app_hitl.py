@@ -743,58 +743,61 @@ with tab_hitl:
 # ---------------------------------------------------------------------------
 with tab_history:
     st.markdown("## 📜 Recent Queries")
-    query_df = st.session_state.query_tracker.get_all_queries(limit=100)
-    if query_df.empty:
-        st.info("No queries yet. Run HITL Q&A to populate history.")
+    if not hasattr(st.session_state, 'query_tracker') or st.session_state.query_tracker is None:
+        st.info("Query tracker not initialized. Please upload data first.")
     else:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total", len(query_df))
-        col2.metric("Successful", len(query_df[query_df["error_message"].isna()]))
-        col3.metric("With Feedback", len(query_df[query_df["user_feedback"].notna()]))
-        col4.metric(
-            "Avg Time",
-            f"{query_df['execution_time_ms'].mean():.0f} ms"
-            if query_df["execution_time_ms"].notna().any()
-            else "N/A",
-        )
-        query_df["timestamp"] = pd.to_datetime(query_df["timestamp"]).dt.strftime(
-            "%Y-%m-%d %H:%M"
-        )
-        st.dataframe(
-            query_df[
-                [
-                    "timestamp",
-                    "original_query",
-                    "selected_interpretation",
-                    "execution_time_ms",
-                    "result_count",
-                    "user_feedback",
-                ]
-            ],
-            use_container_width=True,
-        )
-
-        st.markdown("### 🔎 Query details")
-        query_ids = query_df["query_id"].tolist()
-        if query_ids:
-            labels = {
-                row["query_id"]: f"{row['timestamp']} • {row['original_query'][:80]}"
-                for _, row in query_df.iterrows()
-            }
-            selected_qid = st.selectbox(
-                "Select a query to inspect",
-                options=query_ids,
-                format_func=lambda qid: labels.get(qid, qid),
+        query_df = st.session_state.query_tracker.get_all_queries(limit=100)
+        if query_df.empty:
+            st.info("No queries yet. Run HITL Q&A to populate history.")
+        else:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total", len(query_df))
+            col2.metric("Successful", len(query_df[query_df["error_message"].isna()]))
+            col3.metric("With Feedback", len(query_df[query_df["user_feedback"].notna()]))
+            col4.metric(
+                "Avg Time",
+                f"{query_df['execution_time_ms'].mean():.0f} ms"
+                if query_df["execution_time_ms"].notna().any()
+                else "N/A",
             )
-            if selected_qid:
-                trace = st.session_state.query_tracker.get_full_trace(selected_qid)
-                if trace:
-                    log = trace["log"]
-                    interpretations = trace["interpretations"]
-                    sample_df = trace["sample_results"]
-                    models = trace["models"]
+            query_df["timestamp"] = pd.to_datetime(query_df["timestamp"]).dt.strftime(
+                "%Y-%m-%d %H:%M"
+            )
+            st.dataframe(
+                query_df[
+                    [
+                        "timestamp",
+                        "original_query",
+                        "selected_interpretation",
+                        "execution_time_ms",
+                        "result_count",
+                        "user_feedback",
+                    ]
+                ],
+                use_container_width=True,
+            )
 
-                    st.markdown(f"**Original query:** {log['original_query']}")
+            st.markdown("### 🔎 Query details")
+            query_ids = query_df["query_id"].tolist()
+            if query_ids:
+                labels = {
+                    row["query_id"]: f"{row['timestamp']} • {row['original_query'][:80]}"
+                    for _, row in query_df.iterrows()
+                }
+                selected_qid = st.selectbox(
+                    "Select a query to inspect",
+                    options=query_ids,
+                    format_func=lambda qid: labels.get(qid, qid),
+                )
+                if selected_qid:
+                    trace = st.session_state.query_tracker.get_full_trace(selected_qid)
+                    if trace:
+                        log = trace["log"]
+                        interpretations = trace["interpretations"]
+                        sample_df = trace["sample_results"]
+                        models = trace["models"]
+
+                        st.markdown(f"**Original query:** {log['original_query']}")
                     st.caption(
                         f"Timestamp: {log['timestamp']} • Query ID: {log['query_id']}"
                     )
