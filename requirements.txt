@@ -1,11 +1,3 @@
--e .
-streamlit
-pandas
-plotly
-python-dotenv
-openai
-langchain
-
 # Core
 streamlit
 fastapi==0.109.0
