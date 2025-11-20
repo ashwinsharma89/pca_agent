@@ -609,10 +609,10 @@ with tab_hitl:
                     st.session_state.query_engine = engine
                     
                     # Initialize orchestrator
-                    st.session_state.orchestrator = QueryOrchestrator(
-                        query_engine=engine,
-                        interpreter=st.session_state.interpreter
-                    )
+               #     st.session_state.orchestrator = QueryOrchestrator(
+               #         query_engine=engine,
+                #        interpreter=st.session_state.interpreter
+                 #   )
 
         user_query = st.text_input(
             "🔍 Ask a question about your campaigns",
