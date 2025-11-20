@@ -6,6 +6,7 @@ from pathlib import Path
 # Add the project root to Python path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
+import os
 
 # Debug: Print what files exist
 print("Project root:", project_root)
@@ -17,7 +18,6 @@ else:
     print("Directory doesn't exist!")
 
 # Then your imports...
-import os
 import time
 from datetime import datetime
 from typing import Optional
