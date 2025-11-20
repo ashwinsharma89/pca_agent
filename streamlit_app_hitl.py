@@ -702,10 +702,61 @@ with tab_auto:
         analysis = st.session_state.analysis_data
         df = st.session_state.df
 
+        # Quick Navigation
+        st.markdown("## 🎯 Quick Navigation")
+        nav_cols = st.columns(6)
+        if nav_cols[0].button("📊 Summary", use_container_width=True):
+            st.markdown('<a href="#executive-summary"></a>', unsafe_allow_html=True)
+        if nav_cols[1].button("📈 Metrics", use_container_width=True):
+            st.markdown('<a href="#key-performance-metrics"></a>', unsafe_allow_html=True)
+        if nav_cols[2].button("💡 Opportunities", use_container_width=True):
+            st.markdown('<a href="#opportunities-risks"></a>', unsafe_allow_html=True)
+        if nav_cols[3].button("📊 Analytics", use_container_width=True):
+            st.markdown('<a href="#performance-analytics"></a>', unsafe_allow_html=True)
+        if nav_cols[4].button("🧭 Overview", use_container_width=True):
+            st.markdown('<a href="#management-overview"></a>', unsafe_allow_html=True)
+        if nav_cols[5].button("🔁 Re-run", use_container_width=True):
+            st.session_state.analysis_complete = False
+            st.session_state.analysis_data = None
+            st.session_state.df = None
+            st.rerun()
+        
+        st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        
+        st.markdown("<div id='executive-summary'></div>", unsafe_allow_html=True)
         st.markdown("## 📊 Executive Summary")
-        st.info(analysis["executive_summary"])
+        
+        # Parse executive summary into brief points
+        exec_summary = analysis["executive_summary"]
+        
+        # Create brief summary (first 100 words)
+        words = exec_summary.split()
+        brief_summary = ' '.join(words[:100])
+        if len(words) > 100:
+            brief_summary += "..."
+        
+        # Show brief summary with expander for full version
+        st.markdown(f"**Key Highlights:**")
+        # Extract key points (sentences with numbers or keywords)
+        sentences = exec_summary.split('.')
+        key_points = []
+        for sent in sentences[:5]:  # First 5 sentences
+            sent = sent.strip()
+            if sent and (any(char.isdigit() for char in sent) or any(kw in sent.lower() for kw in ['roas', 'ctr', 'cpa', 'conversion', 'spend', 'campaign'])):
+                key_points.append(f"• {sent}")
+        
+        if key_points:
+            for point in key_points[:4]:  # Max 4 points
+                st.markdown(point)
+        else:
+            st.markdown(brief_summary)
+        
+        with st.expander("📄 View Full Executive Summary"):
+            st.write(exec_summary)
+        
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
+        st.markdown("<div id='management-overview'></div>", unsafe_allow_html=True)
         st.markdown("## 🧭 Management Overview")
         filter_cols = st.columns(3)
         campaign_options = ["All Campaigns"] + (
@@ -777,27 +828,55 @@ with tab_auto:
             for idx, (label, value) in enumerate(available_metrics):
                 cols[idx].metric(label, value)
 
-        if not df_mgmt.empty and "Date" in df_mgmt.columns and (spend_col_mgmt or conv_col_mgmt):
+        # Weekly Performance Chart (Dual-Axis)
+        if not df_mgmt.empty and "Date" in df_mgmt.columns:
             df_line = df_mgmt.copy()
             df_line["Date"] = pd.to_datetime(df_line["Date"], errors="coerce")
-            agg_dict = {}
+            df_line = df_line.dropna(subset=["Date"])
+            df_line["Week"] = df_line["Date"].dt.to_period('W').astype(str)
+            
+            # Build aggregation for weekly data
+            weekly_agg = {}
             if spend_col_mgmt:
-                agg_dict[spend_col_mgmt] = "sum"
+                weekly_agg[spend_col_mgmt] = "sum"
             if conv_col_mgmt:
-                agg_dict[conv_col_mgmt] = "sum"
-            daily = df_line.groupby("Date").agg(agg_dict).reset_index()
-            fig = px.line(
-                daily,
-                x="Date",
-                y=list(agg_dict.keys()),
-                title="Daily Performance",
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                weekly_agg[conv_col_mgmt] = "sum"
+            
+            if weekly_agg:
+                weekly = df_line.groupby("Week").agg(weekly_agg).reset_index()
+                
+                # Create dual-axis chart
+                from plotly.subplots import make_subplots
+                import plotly.graph_objects as go
+                
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                if spend_col_mgmt:
+                    fig.add_trace(
+                        go.Bar(x=weekly["Week"], y=weekly[spend_col_mgmt], name=spend_col_mgmt, marker_color='#3b82f6'),
+                        secondary_y=False,
+                    )
+                
+                if conv_col_mgmt:
+                    fig.add_trace(
+                        go.Scatter(x=weekly["Week"], y=weekly[conv_col_mgmt], name=conv_col_mgmt, mode='lines+markers', marker_color='#10b981', line=dict(width=3)),
+                        secondary_y=True,
+                    )
+                
+                fig.update_xaxes(title_text="Week")
+                if spend_col_mgmt:
+                    fig.update_yaxes(title_text=f"<b>{spend_col_mgmt}</b>", secondary_y=False)
+                if conv_col_mgmt:
+                    fig.update_yaxes(title_text=f"<b>{conv_col_mgmt}</b>", secondary_y=True)
+                fig.update_layout(title_text="Weekly Performance", height=400)
+                
+                st.plotly_chart(fig, use_container_width=True)
 
+        st.markdown("<div id='key-performance-metrics'></div>", unsafe_allow_html=True)
         st.markdown("## 📈 Key Performance Metrics")
         overview = analysis["metrics"]["overview"]
         
-        # Build dynamic overview metrics based on what's available
+        # Build dynamic overview metrics based on what's available (6 KPIs)
         overview_metrics = []
         if overview.get('total_spend', 0) > 0:
             overview_metrics.append(("Total Spend", f"${overview['total_spend']:,.0f}"))
@@ -807,12 +886,17 @@ with tab_auto:
             overview_metrics.append(("Average ROAS", f"{overview['avg_roas']:.2f}x"))
         if overview.get('avg_cpa') and overview['avg_cpa'] > 0:
             overview_metrics.append(("Average CPA", f"${overview['avg_cpa']:.2f}"))
+        if overview.get('avg_ctr') and overview['avg_ctr'] > 0:
+            overview_metrics.append(("Average CTR", f"{overview['avg_ctr']:.2f}%"))
+        if overview.get('avg_cpc') and overview['avg_cpc'] > 0:
+            overview_metrics.append(("Average CPC", f"${overview['avg_cpc']:.2f}"))
         
         if overview_metrics:
-            cols = st.columns(len(overview_metrics))
+            cols = st.columns(min(len(overview_metrics), 6))
             for idx, (label, value) in enumerate(overview_metrics):
                 cols[idx].metric(label, value)
 
+        st.markdown("<div id='opportunities-risks'></div>", unsafe_allow_html=True)
         st.markdown("## 💡 Opportunities & Risks")
 
         # Nicely formatted opportunity cards
@@ -874,6 +958,7 @@ with tab_auto:
 
         # ===== NEW CHARTS SECTION =====
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        st.markdown("<div id='performance-analytics'></div>", unsafe_allow_html=True)
         st.markdown("## 📊 Performance Analytics")
         
         # Get available columns for charts
@@ -940,7 +1025,7 @@ with tab_auto:
                 
                 st.plotly_chart(fig, use_container_width=True)
         
-        # 2. Month-Year Trend Analysis
+        # 2. Month-Year Trend Analysis (Dual-Axis with Dynamic Metric Selection)
         if has_date and spend_col:
             st.markdown("### 📅 Monthly Trend Analysis")
             
@@ -949,40 +1034,74 @@ with tab_auto:
             df_trend = df_trend.dropna(subset=['Date'])
             df_trend['Month_Year'] = df_trend['Date'].dt.to_period('M').astype(str)
             
-            # Aggregate by month
-            monthly_agg_dict = {spend_col: 'sum'}
+            # Build all available metrics
+            all_metrics = []
+            monthly_agg_dict = {}
+            
+            if spend_col:
+                all_metrics.append(spend_col)
+                monthly_agg_dict[spend_col] = 'sum'
             if conv_col:
+                all_metrics.append(conv_col)
                 monthly_agg_dict[conv_col] = 'sum'
             if has_roas:
+                all_metrics.append('ROAS')
                 monthly_agg_dict['ROAS'] = 'mean'
             if has_ctr:
+                all_metrics.append('CTR')
                 monthly_agg_dict['CTR'] = 'mean'
             if has_cpa:
+                all_metrics.append('CPA')
                 monthly_agg_dict['CPA'] = 'mean'
+            if has_cpc:
+                all_metrics.append('CPC')
+                monthly_agg_dict['CPC'] = 'mean'
+            if clicks_col:
+                all_metrics.append(clicks_col)
+                monthly_agg_dict[clicks_col] = 'sum'
             
             monthly_data = df_trend.groupby('Month_Year').agg(monthly_agg_dict).reset_index()
             
-            # Select metrics to display
-            trend_metrics = st.multiselect(
-                'Select metrics to display',
-                options=[col for col in monthly_agg_dict.keys() if col in monthly_data.columns],
-                default=[spend_col] + ([conv_col] if conv_col else []),
-                key='trend_metrics'
+            # Let user select 2 metrics for dual-axis
+            col1, col2 = st.columns(2)
+            metric1 = col1.selectbox(
+                'Primary Metric (Left Axis)',
+                options=all_metrics,
+                index=0,
+                key='monthly_metric1'
+            )
+            metric2 = col2.selectbox(
+                'Secondary Metric (Right Axis)',
+                options=all_metrics,
+                index=min(1, len(all_metrics)-1),
+                key='monthly_metric2'
             )
             
-            if trend_metrics:
-                fig = px.line(
-                    monthly_data,
-                    x='Month_Year',
-                    y=trend_metrics,
-                    title='Monthly Performance Trends',
-                    markers=True
-                )
-                fig.update_layout(height=400, xaxis_title='Month', yaxis_title='Value')
-                st.plotly_chart(fig, use_container_width=True)
+            # Create dual-axis chart
+            from plotly.subplots import make_subplots
+            import plotly.graph_objects as go
+            
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            fig.add_trace(
+                go.Bar(x=monthly_data['Month_Year'], y=monthly_data[metric1], name=metric1, marker_color='#3b82f6'),
+                secondary_y=False,
+            )
+            
+            fig.add_trace(
+                go.Scatter(x=monthly_data['Month_Year'], y=monthly_data[metric2], name=metric2, mode='lines+markers', marker_color='#ec4899', line=dict(width=3)),
+                secondary_y=True,
+            )
+            
+            fig.update_xaxes(title_text="Month")
+            fig.update_yaxes(title_text=f"<b>{metric1}</b>", secondary_y=False)
+            fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
+            fig.update_layout(title_text="Monthly Performance Trends", height=400)
+            
+            st.plotly_chart(fig, use_container_width=True)
         
-        # 3. Funnel Trend Analysis
-        if has_date and impr_col and clicks_col and conv_col:
+        # 3. Funnel Analysis (Clicks, CTR, Conversion Rate)
+        if has_date and clicks_col and conv_col:
             st.markdown("### 🔄 Funnel Performance Trend")
             
             df_funnel = df.copy()
@@ -991,52 +1110,74 @@ with tab_auto:
             df_funnel['Month_Year'] = df_funnel['Date'].dt.to_period('M').astype(str)
             
             # Calculate funnel metrics by month
-            funnel_monthly = df_funnel.groupby('Month_Year').agg({
-                impr_col: 'sum',
-                clicks_col: 'sum',
-                conv_col: 'sum'
-            }).reset_index()
+            funnel_agg = {clicks_col: 'sum'}
+            if conv_col:
+                funnel_agg[conv_col] = 'sum'
+            if impr_col:
+                funnel_agg[impr_col] = 'sum'
+            
+            funnel_monthly = df_funnel.groupby('Month_Year').agg(funnel_agg).reset_index()
             
             # Calculate rates
-            funnel_monthly['CTR'] = (funnel_monthly[clicks_col] / funnel_monthly[impr_col] * 100).round(2)
-            funnel_monthly['Conv_Rate'] = (funnel_monthly[conv_col] / funnel_monthly[clicks_col] * 100).round(2)
+            if impr_col and clicks_col in funnel_monthly.columns:
+                funnel_monthly['CTR'] = (funnel_monthly[clicks_col] / funnel_monthly[impr_col] * 100).round(2)
+            if clicks_col and conv_col and clicks_col in funnel_monthly.columns and conv_col in funnel_monthly.columns:
+                funnel_monthly['Conversion_Rate'] = (funnel_monthly[conv_col] / funnel_monthly[clicks_col] * 100).round(2)
             
-            # Add ROAS/CPA if available
-            if has_roas or has_cpa:
-                funnel_agg = {'CTR': 'mean', 'Conv_Rate': 'mean'}
-                if has_roas:
-                    funnel_monthly_roas = df_funnel.groupby('Month_Year')['ROAS'].mean().reset_index()
-                    funnel_monthly = funnel_monthly.merge(funnel_monthly_roas, on='Month_Year', how='left')
-                    funnel_agg['ROAS'] = 'mean'
-                if has_cpa:
-                    funnel_monthly_cpa = df_funnel.groupby('Month_Year')['CPA'].mean().reset_index()
-                    funnel_monthly = funnel_monthly.merge(funnel_monthly_cpa, on='Month_Year', how='left')
-                    funnel_agg['CPA'] = 'mean'
+            # Create multi-line chart with different colors for each funnel stage
+            import plotly.graph_objects as go
             
-            # Select funnel metrics
-            funnel_options = ['CTR', 'Conv_Rate']
-            if has_roas:
-                funnel_options.append('ROAS')
-            if has_cpa:
-                funnel_options.append('CPA')
+            fig = go.Figure()
             
-            selected_funnel = st.multiselect(
-                'Select funnel metrics',
-                options=funnel_options,
-                default=['CTR', 'Conv_Rate'],
-                key='funnel_metrics'
+            # Add Clicks (Blue)
+            if clicks_col in funnel_monthly.columns:
+                fig.add_trace(go.Scatter(
+                    x=funnel_monthly['Month_Year'],
+                    y=funnel_monthly[clicks_col],
+                    name='Clicks',
+                    mode='lines+markers',
+                    line=dict(color='#3b82f6', width=3),
+                    marker=dict(size=8)
+                ))
+            
+            # Add CTR (Green)
+            if 'CTR' in funnel_monthly.columns:
+                fig.add_trace(go.Scatter(
+                    x=funnel_monthly['Month_Year'],
+                    y=funnel_monthly['CTR'],
+                    name='CTR (%)',
+                    mode='lines+markers',
+                    line=dict(color='#10b981', width=3),
+                    marker=dict(size=8),
+                    yaxis='y2'
+                ))
+            
+            # Add Conversion Rate (Purple)
+            if 'Conversion_Rate' in funnel_monthly.columns:
+                fig.add_trace(go.Scatter(
+                    x=funnel_monthly['Month_Year'],
+                    y=funnel_monthly['Conversion_Rate'],
+                    name='Conversion Rate (%)',
+                    mode='lines+markers',
+                    line=dict(color='#8b5cf6', width=3),
+                    marker=dict(size=8),
+                    yaxis='y2'
+                ))
+            
+            fig.update_layout(
+                title='Funnel Performance: Clicks, CTR & Conversion Rate',
+                xaxis_title='Month',
+                yaxis_title='Clicks',
+                yaxis2=dict(
+                    title='Rate (%)',
+                    overlaying='y',
+                    side='right'
+                ),
+                height=400,
+                hovermode='x unified'
             )
             
-            if selected_funnel:
-                fig = px.line(
-                    funnel_monthly,
-                    x='Month_Year',
-                    y=selected_funnel,
-                    title='Funnel Efficiency Over Time',
-                    markers=True
-                )
-                fig.update_layout(height=400, xaxis_title='Month', yaxis_title='Rate / Value')
-                st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
         
         # 4. Correlation Analysis
         if spend_col and conv_col and (has_ctr or has_roas):
@@ -1100,12 +1241,6 @@ with tab_auto:
                     st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
-        st.markdown("## 🔁 Want to re-run?")
-        if st.button("🧹 Clear Analysis", use_container_width=True):
-            st.session_state.analysis_complete = False
-            st.session_state.analysis_data = None
-            st.session_state.df = None
-            st.rerun()
 
 
 # ---------------------------------------------------------------------------
