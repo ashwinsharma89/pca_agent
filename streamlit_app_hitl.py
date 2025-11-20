@@ -1,20 +1,41 @@
 """Unified PCA Agent Streamlit app with auto-analysis + HITL Q&A."""
+# At the top of streamlit_app_hitl.py
+import sys
 import os
+from pathlib import Path
+
+# Add both current directory and parent to Python path for Streamlit Cloud
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+sys.path.insert(0, os.path.join(current_dir, 'src'))
+
+import streamlit as st
+
+# DELETE OR COMMENT OUT THESE LINES (11-17):
+# print("Project root:", project_root)
+# print("Files in src/query_engine/:")
+# query_engine_path = project_root / "src" / "query_engine"
+# if query_engine_path.exists():
+#     print(os.listdir(query_engine_path))
+# else:
+#     print("Directory doesn't exist!")
+
+# Then your imports...
 import time
 from datetime import datetime
 from typing import Optional
 
 import pandas as pd
 import plotly.express as px
-import streamlit as st
+# REMOVE this duplicate streamlit import (line 25):
+# import streamlit as st
 from dotenv import load_dotenv
 
 from src.analytics import MediaAnalyticsExpert
 from src.evaluation.query_tracker import QueryTracker
 from src.query_engine.nl_to_sql import NaturalLanguageQueryEngine
-from src.query_engine.smart_interpretation import SmartQueryInterpreter
-from src.orchestration.query_orchestrator import QueryOrchestrator
-
+#from src.query_engine.smart_interpretation import SmartQueryInterpreter
+#from src.orchestration.query_orchestrator import QueryOrchestrator
 
 load_dotenv()
 
@@ -137,8 +158,8 @@ def init_state():
         "df": None,
         "df_loaded_from_cache": False,
         "query_tracker": QueryTracker(),
-        "interpreter": SmartQueryInterpreter(),
-        "orchestrator": None,
+        "interpreter": None,
+      #  "orchestrator": None,
         "current_query_id": None,
         "interpretations": None,
         "selected_interpretation": None,
@@ -588,10 +609,10 @@ with tab_hitl:
                     st.session_state.query_engine = engine
                     
                     # Initialize orchestrator
-                    st.session_state.orchestrator = QueryOrchestrator(
-                        query_engine=engine,
-                        interpreter=st.session_state.interpreter
-                    )
+               #     st.session_state.orchestrator = QueryOrchestrator(
+               #         query_engine=engine,
+                #        interpreter=st.session_state.interpreter
+                 #   )
 
         user_query = st.text_input(
             "🔍 Ask a question about your campaigns",
