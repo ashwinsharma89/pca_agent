@@ -791,64 +791,53 @@ with tab_history:
                     format_func=lambda qid: labels.get(qid, qid),
                 )
                 if selected_qid:
-                    trace = st.session_state.query_tracker.get_full_trace(selected_qid)
-                    if trace:
-                        log = trace["log"]
-                        interpretations = trace["interpretations"]
-                        sample_df = trace["sample_results"]
-                        models = trace["models"]
-
+                    log = st.session_state.query_tracker.get_query_log(selected_qid)
+                    if log:
                         st.markdown(f"**Original query:** {log['original_query']}")
-                    st.caption(
-                        f"Timestamp: {log['timestamp']} • Query ID: {log['query_id']}"
-                    )
-                    col_a, col_b, col_c, col_d = st.columns(4)
-                    exec_ms = log.get("execution_time_ms") or 0
-                    col_a.metric("Exec time", f"{exec_ms} ms")
-                    col_b.metric("Rows", str(log.get("result_count") or 0))
-                    sel_idx = log.get("selected_interpretation_index")
-                    if sel_idx is not None:
-                        col_c.metric("Selected interpretation", str(sel_idx + 1))
-                    else:
-                        col_c.metric("Selected interpretation", "None")
-                    fb_map = {1: "👍", 0: "😐", -1: "👎"}
-                    col_d.metric("Feedback", fb_map.get(log.get("user_feedback"), "—"))
-
-                    left, right = st.columns(2)
-                    with left:
-                        st.markdown("#### 🧠 Interpretations")
-                        if interpretations:
-                            for i, interp in enumerate(interpretations):
-                                label = interp.get("interpretation", "")
-                                prefix = f"{i+1}. {label}"
-                                if sel_idx is not None and i == sel_idx:
-                                    prefix += " (selected)"
-                                st.markdown(f"- {prefix}")
-                        else:
-                            st.caption("No interpretations stored.")
-                    with right:
-                        st.markdown("#### 🔍 Generated SQL")
-                        st.code(
-                            log.get("generated_sql") or "No SQL generated",
-                            language="sql",
+                        st.caption(
+                            f"Timestamp: {log['timestamp']} • Query ID: {log['query_id']}"
                         )
+                        col_a, col_b, col_c, col_d = st.columns(4)
+                        exec_ms = log.get("execution_time_ms") or 0
+                        col_a.metric("Exec time", f"{exec_ms} ms")
+                        col_b.metric("Rows", str(log.get("result_count") or 0))
+                        sel_idx = log.get("selected_interpretation_index")
+                        if sel_idx is not None:
+                            col_c.metric("Selected interpretation", str(sel_idx + 1))
+                        else:
+                            col_c.metric("Selected interpretation", "None")
+                        fb_map = {1: "👍", 0: "😐", -1: "👎"}
+                        col_d.metric("Feedback", fb_map.get(log.get("user_feedback"), "—"))
 
-                    st.markdown("#### 📊 Sample results")
-                    if isinstance(sample_df, pd.DataFrame) and not sample_df.empty:
-                        st.dataframe(sample_df, use_container_width=True)
-                    else:
-                        st.caption("No sample results stored for this query.")
+                        # Parse interpretations from JSON string
+                        try:
+                            import json
+                            interpretations = json.loads(log.get("interpretations", "[]"))
+                        except:
+                            interpretations = []
 
-                    st.markdown("#### 🤖 Models used")
-                    if models:
-                        model_df = pd.DataFrame(models)
-                        st.dataframe(model_df, use_container_width=True)
-                    else:
-                        st.caption("No model usage logged for this query yet.")
+                        left, right = st.columns(2)
+                        with left:
+                            st.markdown("#### 🧠 Interpretations")
+                            if interpretations:
+                                for i, interp in enumerate(interpretations):
+                                    label = interp.get("interpretation", "")
+                                    prefix = f"{i+1}. {label}"
+                                    if sel_idx is not None and i == sel_idx:
+                                        prefix += " (selected)"
+                                    st.markdown(f"- {prefix}")
+                            else:
+                                st.caption("No interpretations stored.")
+                        with right:
+                            st.markdown("#### 🔍 Generated SQL")
+                            st.code(
+                                log.get("generated_sql") or "No SQL generated",
+                                language="sql",
+                            )
 
-                    if log.get("feedback_comment"):
-                        st.markdown("#### 💬 User comment")
-                        st.write(log["feedback_comment"])
+                        if log.get("feedback_comment"):
+                            st.markdown("#### 💬 User comment")
+                            st.write(log["feedback_comment"])
 
 
 # ---------------------------------------------------------------------------
@@ -878,16 +867,14 @@ with tab_metrics:
         st.bar_chart(feedback_df)
         st.markdown("### 🔥 Most common queries")
         st.write(query_df["original_query"].value_counts().head(10))
-
-        st.markdown("### 🤖 Model usage and performance")
-        model_df = st.session_state.query_tracker.get_per_model_metrics()
-        if model_df.empty:
-            st.caption("No model usage logged yet.")
-        else:
-            st.dataframe(model_df, use_container_width=True)
-            if "model_name" in model_df.columns and "usage_count" in model_df.columns:
-                chart_df = model_df.set_index("model_name")["usage_count"]
-                st.bar_chart(chart_df)
+        
+        # Get metrics summary
+        st.markdown("### 📊 Performance Summary")
+        metrics = st.session_state.query_tracker.get_metrics_summary()
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Success Rate", f"{metrics['success_rate']:.1f}%")
+        col2.metric("Avg Execution Time", f"{metrics['avg_execution_time_ms']:.0f} ms")
+        col3.metric("Avg Feedback", f"{metrics['avg_feedback']:.2f}")
 
 
 st.markdown("---")
