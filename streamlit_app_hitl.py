@@ -9,14 +9,14 @@ sys.path.insert(0, str(project_root))
 import os
 import streamlit as st
 
-# Debug: Print what files exist
-print("Project root:", project_root)
-print("Files in src/query_engine/:")
-query_engine_path = project_root / "src" / "query_engine"
-if query_engine_path.exists():
-    print(os.listdir(query_engine_path))
-else:
-    print("Directory doesn't exist!")
+# DELETE OR COMMENT OUT THESE LINES (11-17):
+# print("Project root:", project_root)
+# print("Files in src/query_engine/:")
+# query_engine_path = project_root / "src" / "query_engine"
+# if query_engine_path.exists():
+#     print(os.listdir(query_engine_path))
+# else:
+#     print("Directory doesn't exist!")
 
 # Then your imports...
 import time
@@ -25,7 +25,8 @@ from typing import Optional
 
 import pandas as pd
 import plotly.express as px
-import streamlit as st
+# REMOVE this duplicate streamlit import (line 25):
+# import streamlit as st
 from dotenv import load_dotenv
 
 from src.analytics import MediaAnalyticsExpert
