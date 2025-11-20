@@ -57,92 +57,358 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+    /* ============================================
+       ENTERPRISE DESIGN SYSTEM - PCA AGENT
+       ============================================ */
+    
+    /* === TYPOGRAPHY === */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    }
+    
     .main-header {
-        font-size: 2.75rem;
-        font-weight: 800;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #ff6cab 100%);
+        font-size: 2.5rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.5rem;
+        line-height: 1.2;
     }
-    .section-divider {
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        border-bottom: 1px solid rgba(102,126,234,0.35);
+    
+    h1, h2, h3 {
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #f1f5f9;
     }
-    .metric-card {
-        background: linear-gradient(135deg, rgba(102,126,234,0.95), rgba(118,75,162,0.95));
-        padding: 1.25rem;
-        border-radius: 12px;
-        color: white;
-        box-shadow: 0 20px 45px rgba(50,50,93,0.15);
-    }
-    .insight-card {
-        background: #1e293b;
-        padding: 1.1rem;
-        border-left: 4px solid #667eea;
-        border-radius: 8px;
-        margin-bottom: 0.75rem;
-        color: #e2e8f0;
-    }
-
-    /* App background and main container */
+    
+    /* === LAYOUT & CONTAINERS === */
     .stApp {
-        background: radial-gradient(circle at top left, #0f172a 0, #020617 45%, #000000 100%);
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
     }
+    
     .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-        max-width: 1180px;
+        padding-top: 2rem;
+        padding-bottom: 4rem;
+        max-width: 1400px;
+        padding-left: 3rem;
+        padding-right: 3rem;
     }
-
-    /* Sidebar styling */
+    
+    /* === SIDEBAR === */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #020617 0%, #0b1120 35%, #111827 100%);
-        border-right: 1px solid rgba(148,163,184,0.35);
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        border-right: 1px solid rgba(148, 163, 184, 0.1);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
     }
+    
     [data-testid="stSidebar"] * {
-        color: #e5e7eb !important;
+        color: #e2e8f0 !important;
     }
-
-    /* Tabs styling */
+    
+    [data-testid="stSidebar"] .stMarkdown {
+        padding: 0.5rem 0;
+    }
+    
+    /* === TABS === */
+    [data-testid="stTabs"] {
+        background: rgba(15, 23, 42, 0.4);
+        border-radius: 16px;
+        padding: 0.5rem;
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    
     [data-testid="stTabs"] [data-baseweb="tab-list"] {
         gap: 0.5rem;
+        background: transparent;
     }
+    
     [data-testid="stTabs"] [data-baseweb="tab"] {
-        background: rgba(15,23,42,0.85);
-        border-radius: 999px;
-        padding: 0.5rem 1.1rem;
-        color: #cbd5f5;
-        font-weight: 600;
-        border: 1px solid transparent;
-    }
-    [data-testid="stTabs"] [aria-selected="true"] {
-        background: linear-gradient(90deg, #4f46e5, #7c3aed);
-        color: #f9fafb !important;
-        border-color: rgba(191,219,254,0.35);
-    }
-
-    /* Primary buttons */
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #4f46e5, #ec4899);
-        color: white;
-        border-radius: 999px;
-        padding: 0.4rem 1.5rem;
-        font-weight: 600;
-        border: none;
-        box-shadow: 0 12px 25px rgba(15,23,42,0.45);
-    }
-    .stButton > button[kind="primary"]:hover {
-        filter: brightness(1.05);
-        box-shadow: 0 18px 35px rgba(15,23,42,0.65);
-    }
-
-    /* Dataframes */
-    .stDataFrame {
+        background: transparent;
         border-radius: 12px;
+        padding: 0.75rem 1.5rem;
+        color: #94a3b8;
+        font-weight: 500;
+        font-size: 0.95rem;
+        border: none;
+        transition: all 0.2s ease;
+    }
+    
+    [data-testid="stTabs"] [data-baseweb="tab"]:hover {
+        background: rgba(59, 130, 246, 0.1);
+        color: #cbd5e1;
+    }
+    
+    [data-testid="stTabs"] [aria-selected="true"] {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        color: #ffffff !important;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+    
+    /* === CARDS === */
+    .metric-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+        backdrop-filter: blur(16px);
+        padding: 1.5rem;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.1);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 48px rgba(59, 130, 246, 0.2);
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+    
+    .insight-card {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%);
+        backdrop-filter: blur(16px);
+        padding: 1.5rem;
+        border-left: 4px solid #3b82f6;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        color: #e2e8f0;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+        transition: all 0.3s ease;
+    }
+    
+    .insight-card:hover {
+        transform: translateX(4px);
+        border-left-color: #8b5cf6;
+        box-shadow: 0 8px 32px rgba(59, 130, 246, 0.2);
+    }
+    
+    .section-divider {
+        margin: 3rem 0 2rem 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.3) 50%, transparent 100%);
+    }
+    
+    /* === BUTTONS === */
+    .stButton > button {
+        border-radius: 12px;
+        font-weight: 500;
+        font-size: 0.95rem;
+        padding: 0.65rem 1.75rem;
+        transition: all 0.2s ease;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        color: white;
+        border: none;
+        box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+        filter: brightness(1.1);
+    }
+    
+    .stButton > button:not([kind="primary"]) {
+        background: rgba(30, 41, 59, 0.6);
+        color: #cbd5e1;
+        backdrop-filter: blur(8px);
+    }
+    
+    .stButton > button:not([kind="primary"]):hover {
+        background: rgba(59, 130, 246, 0.15);
+        border-color: rgba(59, 130, 246, 0.3);
+        color: #e2e8f0;
+    }
+    
+    /* === INPUTS & FORMS === */
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div > div,
+    .stMultiSelect > div > div > div {
+        background: rgba(30, 41, 59, 0.6) !important;
+        border: 1px solid rgba(148, 163, 184, 0.2) !important;
+        border-radius: 12px !important;
+        color: #e2e8f0 !important;
+        backdrop-filter: blur(8px);
+    }
+    
+    .stTextInput > div > div > input:focus,
+    .stSelectbox > div > div > div:focus {
+        border-color: rgba(59, 130, 246, 0.5) !important;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
+    }
+    
+    /* === DATAFRAMES & TABLES === */
+    .stDataFrame {
+        border-radius: 16px;
         overflow: hidden;
-        box-shadow: 0 18px 40px rgba(15,23,42,0.35);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    
+    .stDataFrame [data-testid="stDataFrameResizable"] {
+        background: rgba(15, 23, 42, 0.8);
+        backdrop-filter: blur(16px);
+    }
+    
+    /* === METRICS === */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        letter-spacing: -0.02em;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    [data-testid="stMetricDelta"] {
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+    
+    /* === EXPANDERS === */
+    .streamlit-expanderHeader {
+        background: rgba(30, 41, 59, 0.6);
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.1);
+        color: #e2e8f0;
+        font-weight: 500;
+        backdrop-filter: blur(8px);
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+    
+    /* === ALERTS & MESSAGES === */
+    .stAlert {
+        background: rgba(30, 41, 59, 0.6);
+        border-radius: 12px;
+        border-left: 4px solid #3b82f6;
+        backdrop-filter: blur(16px);
+        padding: 1rem 1.25rem;
+    }
+    
+    .stSuccess {
+        border-left-color: #10b981;
+        background: rgba(16, 185, 129, 0.1);
+    }
+    
+    .stWarning {
+        border-left-color: #f59e0b;
+        background: rgba(245, 158, 11, 0.1);
+    }
+    
+    .stError {
+        border-left-color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+    }
+    
+    .stInfo {
+        border-left-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.1);
+    }
+    
+    /* === CHARTS === */
+    .js-plotly-plot {
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    
+    /* === FILE UPLOADER === */
+    [data-testid="stFileUploader"] {
+        background: rgba(30, 41, 59, 0.6);
+        border: 2px dashed rgba(148, 163, 184, 0.3);
+        border-radius: 16px;
+        padding: 2rem;
+        backdrop-filter: blur(8px);
+        transition: all 0.3s ease;
+    }
+    
+    [data-testid="stFileUploader"]:hover {
+        border-color: rgba(59, 130, 246, 0.5);
+        background: rgba(59, 130, 246, 0.05);
+    }
+    
+    /* === RADIO BUTTONS === */
+    .stRadio > div {
+        background: rgba(30, 41, 59, 0.4);
+        border-radius: 12px;
+        padding: 0.5rem;
+    }
+    
+    /* === SCROLLBAR === */
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.5);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: rgba(59, 130, 246, 0.5);
+        border-radius: 5px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(59, 130, 246, 0.7);
+    }
+    
+    /* === DOWNLOAD BUTTON === */
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        font-weight: 500;
+        padding: 0.65rem 1.5rem;
+        box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+    }
+    
+    .stDownloadButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+    }
+    
+    /* === SPINNER === */
+    .stSpinner > div {
+        border-top-color: #3b82f6 !important;
+    }
+    
+    /* === CODE BLOCKS === */
+    .stCodeBlock {
+        background: rgba(15, 23, 42, 0.8);
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    
+    /* === RESPONSIVE DESIGN === */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        
+        .main-header {
+            font-size: 2rem;
+        }
     }
 </style>
 """,
