@@ -78,11 +78,12 @@ st.markdown(
         box-shadow: 0 20px 45px rgba(50,50,93,0.15);
     }
     .insight-card {
-        background: #f8f9ff;
+        background: #1e293b;
         padding: 1.1rem;
         border-left: 4px solid #667eea;
         border-radius: 8px;
         margin-bottom: 0.75rem;
+        color: #e2e8f0;
     }
 
     /* App background and main container */
