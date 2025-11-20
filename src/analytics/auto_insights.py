@@ -178,6 +178,8 @@ class MediaAnalyticsExpert:
             "avg_roas": float(df['ROAS'].mean()) if 'ROAS' in df.columns else 0,
             "avg_cpa": float(df['CPA'].mean()) if 'CPA' in df.columns else 0,
             "avg_ctr": float(df['CTR'].mean()) if 'CTR' in df.columns else 0,
+            "avg_cpc": float(df['CPC'].mean()) if 'CPC' in df.columns else 0,
+            "avg_conversion_rate": float(df['Conversion_Rate'].mean()) if 'Conversion_Rate' in df.columns else 0,
         }
         
         # Campaign-level metrics
@@ -746,7 +748,7 @@ Focus on recommendations that can be implemented immediately with clear tactical
         }
     
     def _generate_executive_summary(self, metrics: Dict, insights: List, recommendations: List) -> str:
-        """Generate executive summary."""
+        """Generate comprehensive executive summary with multi-KPI focus."""
         
         # Convert to JSON-serializable format
         def make_serializable(obj):
@@ -765,60 +767,116 @@ Focus on recommendations that can be implemented immediately with clear tactical
         
         overview = make_serializable(metrics.get('overview', {}))
         
+        # Build comprehensive KPI summary
         summary_data = {
             "total_spend": overview.get('total_spend', 0),
             "total_conversions": overview.get('total_conversions', 0),
-            "avg_roas": overview.get('avg_roas', 0),
+            "total_impressions": overview.get('total_impressions', 0),
+            "total_clicks": overview.get('total_clicks', 0),
             "campaigns": overview.get('total_campaigns', 0),
             "platforms": overview.get('total_platforms', 0),
+            "kpis": {
+                "avg_roas": overview.get('avg_roas', 0),
+                "avg_cpa": overview.get('avg_cpa', 0),
+                "avg_ctr": overview.get('avg_ctr', 0),
+                "avg_cpc": overview.get('avg_cpc', 0) if 'avg_cpc' in overview else None,
+                "avg_conversion_rate": overview.get('avg_conversion_rate', 0) if 'avg_conversion_rate' in overview else None
+            },
             "top_insights": insights[:3] if insights else [],
             "top_recommendations": recommendations[:3] if recommendations else []
         }
         
-        prompt = f"""Create a concise executive summary (3-4 paragraphs) for a CMO based on this campaign analysis:
+        prompt = f"""Create a concise executive summary (3-4 paragraphs) for a CMO based on this comprehensive campaign analysis:
 
 Data:
 {json.dumps(summary_data, indent=2)}
 
-Include:
-1. Overall performance assessment
-2. Key wins and challenges
-3. Top 2-3 strategic recommendations
-4. Expected impact of recommendations
+IMPORTANT INSTRUCTIONS:
+1. Analyze performance across MULTIPLE KPIs (not just ROAS):
+   - CTR (Click-Through Rate) - measures ad engagement
+   - CPC (Cost Per Click) - measures click efficiency
+   - CPA (Cost Per Acquisition) - measures conversion cost
+   - Conversion Rate - measures funnel efficiency
+   - ROAS (Return on Ad Spend) - measures revenue efficiency
 
-Write in professional, executive-friendly language. Be specific with numbers."""
+2. Identify patterns across KPIs:
+   - High CTR but low conversion rate = landing page issue
+   - Low CPC with high conversion rate = efficient targeting
+   - High impressions but low CTR = creative fatigue
+
+3. Provide balanced assessment:
+   - Overall performance across all KPIs
+   - Key wins (which KPIs are strong)
+   - Key challenges (which KPIs need improvement)
+   - Top 2-3 strategic recommendations with expected impact
+
+4. Use professional, executive-friendly language with specific numbers.
+
+Write in 3-4 paragraphs focusing on actionable insights across the full marketing funnel."""
 
         try:
-            system_prompt = "You are a strategic marketing consultant writing for C-level executives."
-            summary = self._call_llm(system_prompt, prompt, max_tokens=500).strip()
+            system_prompt = "You are a strategic marketing consultant writing for C-level executives. Focus on multi-KPI analysis, not just ROAS."
+            summary = self._call_llm(system_prompt, prompt, max_tokens=600).strip()
             
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
-            summary = f"Campaign portfolio analysis complete. {summary_data['campaigns']} campaigns analyzed across {summary_data['platforms']} platforms with total spend of ${summary_data['total_spend']:,.0f} and average ROAS of {summary_data['avg_roas']:.2f}x."
+            # Enhanced fallback summary
+            kpi_summary = []
+            if overview.get('avg_roas', 0) > 0:
+                kpi_summary.append(f"ROAS {overview['avg_roas']:.2f}x")
+            if overview.get('avg_ctr', 0) > 0:
+                kpi_summary.append(f"CTR {overview['avg_ctr']:.2f}%")
+            if overview.get('avg_cpa', 0) > 0:
+                kpi_summary.append(f"CPA ${overview['avg_cpa']:.2f}")
+            
+            kpi_text = ", ".join(kpi_summary) if kpi_summary else "multiple KPIs"
+            summary = f"Campaign portfolio analysis complete. {summary_data['campaigns']} campaigns analyzed across {summary_data['platforms']} platforms with total spend of ${summary_data['total_spend']:,.0f}. Key metrics: {kpi_text}. {summary_data['total_conversions']:,.0f} total conversions generated from {summary_data['total_clicks']:,.0f} clicks."
         
         return summary
     
     def _prepare_data_summary(self, df: pd.DataFrame, metrics: Dict) -> str:
-        """Prepare data summary for AI prompts."""
+        """Prepare comprehensive data summary for AI prompts with multi-KPI focus."""
+        overview = metrics['overview']
+        
         summary = f"""
 Campaign Data Summary:
-- Total Campaigns: {metrics['overview'].get('total_campaigns', 0)}
-- Total Platforms: {metrics['overview'].get('total_platforms', 0)}
-- Total Spend: ${metrics['overview'].get('total_spend', 0):,.0f}
-- Total Conversions: {metrics['overview'].get('total_conversions', 0):,.0f}
-- Average ROAS: {metrics['overview'].get('avg_roas', 0):.2f}x
-- Average CPA: ${metrics['overview'].get('avg_cpa', 0):.2f}
-- Average CTR: {metrics['overview'].get('avg_ctr', 0):.2f}%
+- Total Campaigns: {overview.get('total_campaigns', 0)}
+- Total Platforms: {overview.get('total_platforms', 0)}
+- Total Spend: ${overview.get('total_spend', 0):,.0f}
+- Total Impressions: {overview.get('total_impressions', 0):,.0f}
+- Total Clicks: {overview.get('total_clicks', 0):,.0f}
+- Total Conversions: {overview.get('total_conversions', 0):,.0f}
 
-Platform Performance:
+Key Performance Indicators:
+- Average ROAS: {overview.get('avg_roas', 0):.2f}x
+- Average CPA: ${overview.get('avg_cpa', 0):.2f}
+- Average CTR: {overview.get('avg_ctr', 0):.2f}%
+- Average CPC: ${overview.get('avg_cpc', 0):.2f} (if available)
+
+Platform Performance (Multi-KPI View):
 """
         
         if metrics.get('by_platform'):
             for platform, data in metrics['by_platform'].items():
                 summary += f"\n{platform}:"
-                summary += f"\n  - Spend: ${data.get('Spend', 0):,.0f}"
-                summary += f"\n  - ROAS: {data.get('ROAS', 0):.2f}x"
-                summary += f"\n  - Conversions: {data.get('Conversions', 0):,.0f}"
+                # Use flexible column mapping
+                spend_key = next((k for k in ['Spend', 'Total Spent', 'Total_Spent', 'Cost'] if k in data), None)
+                conv_key = next((k for k in ['Conversions', 'Site Visit', 'Site_Visit'] if k in data), None)
+                clicks_key = next((k for k in ['Clicks', 'Click'] if k in data), None)
+                impr_key = next((k for k in ['Impressions', 'Impr'] if k in data), None)
+                
+                if spend_key:
+                    summary += f"\n  - Spend: ${data.get(spend_key, 0):,.0f}"
+                if 'ROAS' in data:
+                    summary += f"\n  - ROAS: {data.get('ROAS', 0):.2f}x"
+                if 'CTR' in data:
+                    summary += f"\n  - CTR: {data.get('CTR', 0):.2f}%"
+                if 'CPA' in data:
+                    summary += f"\n  - CPA: ${data.get('CPA', 0):.2f}"
+                if conv_key:
+                    summary += f"\n  - Conversions: {data.get(conv_key, 0):,.0f}"
+                if clicks_key:
+                    summary += f"\n  - Clicks: {data.get(clicks_key, 0):,.0f}"
         
         return summary
     
