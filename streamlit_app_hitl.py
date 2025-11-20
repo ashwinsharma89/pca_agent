@@ -311,7 +311,22 @@ with tab_auto:
                     # Read file based on extension
                     file_extension = uploaded_file.name.split('.')[-1].lower()
                     if file_extension in ['xlsx', 'xls']:
-                        df = pd.read_excel(uploaded_file)
+                        # Check for multiple sheets
+                        excel_file = pd.ExcelFile(uploaded_file)
+                        sheet_names = excel_file.sheet_names
+                        
+                        if len(sheet_names) > 1:
+                            st.info(f"📑 Found {len(sheet_names)} sheets in Excel file")
+                            selected_sheet = st.selectbox(
+                                "Select sheet to analyze:",
+                                options=sheet_names,
+                                index=0
+                            )
+                            df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                        else:
+                            df = pd.read_excel(uploaded_file)
+                            if len(sheet_names) == 1:
+                                st.info(f"📄 Reading sheet: {sheet_names[0]}")
                     else:
                         df = pd.read_csv(uploaded_file)
                     st.session_state.df = df
