@@ -165,7 +165,11 @@ def init_state():
         "interpretations": None,
         "selected_interpretation": None,
         "query_engine": None,
-        "session_id": str(datetime.now().timestamp()),\r\n        "chart_generator": SmartChartGenerator(),\r\n        "overview_charts": None,\r\n        "last_result": None,\r\n    }
+        "session_id": str(datetime.now().timestamp()),
+        "chart_generator": SmartChartGenerator(),
+        "overview_charts": None,
+        "last_result": None,
+    }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
