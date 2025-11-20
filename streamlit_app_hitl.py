@@ -274,7 +274,7 @@ st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 tab_auto, tab_hitl, tab_history, tab_metrics = st.tabs(
     [
         "📊 Auto Analysis",
-        "💬 Natural Language Q&A",
+        "💬 Q&A",
         "📜 Query History",
         "📈 System Analytics",
     ]
@@ -606,6 +606,234 @@ with tab_auto:
             )
             st.markdown(card_html, unsafe_allow_html=True)
 
+        # ===== NEW CHARTS SECTION =====
+        st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        st.markdown("## 📊 Performance Analytics")
+        
+        # Get available columns for charts
+        has_platform = 'Platform' in df.columns
+        has_date = 'Date' in df.columns
+        has_ctr = 'CTR' in df.columns
+        has_roas = 'ROAS' in df.columns
+        has_cpa = 'CPA' in df.columns
+        has_cpc = 'CPC' in df.columns
+        has_conv_rate = 'Conversion_Rate' in df.columns
+        spend_col = _get_column(df, 'spend')
+        conv_col = _get_column(df, 'conversions')
+        clicks_col = _get_column(df, 'clicks')
+        impr_col = _get_column(df, 'impressions')
+        
+        # 1. Channel Performance Comparison
+        if has_platform and (has_ctr or has_roas or has_cpa):
+            st.markdown("### 📈 Channel Performance Comparison")
+            
+            # Let user select two metrics to compare
+            available_kpis = []
+            if has_ctr:
+                available_kpis.append('CTR')
+            if has_roas:
+                available_kpis.append('ROAS')
+            if has_cpa:
+                available_kpis.append('CPA')
+            if has_cpc:
+                available_kpis.append('CPC')
+            if has_conv_rate:
+                available_kpis.append('Conversion_Rate')
+            
+            if len(available_kpis) >= 2:
+                col1, col2 = st.columns(2)
+                metric1 = col1.selectbox('Select First Metric', available_kpis, index=0, key='channel_metric1')
+                metric2 = col2.selectbox('Select Second Metric', available_kpis, index=min(1, len(available_kpis)-1), key='channel_metric2')
+                
+                # Create platform aggregation
+                platform_agg = df.groupby('Platform').agg({
+                    metric1: 'mean',
+                    metric2: 'mean'
+                }).reset_index()
+                
+                # Create dual-axis chart
+                from plotly.subplots import make_subplots
+                import plotly.graph_objects as go
+                
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                fig.add_trace(
+                    go.Bar(x=platform_agg['Platform'], y=platform_agg[metric1], name=metric1, marker_color='#3498db'),
+                    secondary_y=False,
+                )
+                
+                fig.add_trace(
+                    go.Scatter(x=platform_agg['Platform'], y=platform_agg[metric2], name=metric2, mode='lines+markers', marker_color='#e74c3c', line=dict(width=3)),
+                    secondary_y=True,
+                )
+                
+                fig.update_xaxes(title_text="Platform")
+                fig.update_yaxes(title_text=f"<b>{metric1}</b>", secondary_y=False)
+                fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
+                fig.update_layout(title_text=f"Channel Performance: {metric1} vs {metric2}", height=400)
+                
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # 2. Month-Year Trend Analysis
+        if has_date and spend_col:
+            st.markdown("### 📅 Monthly Trend Analysis")
+            
+            df_trend = df.copy()
+            df_trend['Date'] = pd.to_datetime(df_trend['Date'], errors='coerce')
+            df_trend = df_trend.dropna(subset=['Date'])
+            df_trend['Month_Year'] = df_trend['Date'].dt.to_period('M').astype(str)
+            
+            # Aggregate by month
+            monthly_agg_dict = {spend_col: 'sum'}
+            if conv_col:
+                monthly_agg_dict[conv_col] = 'sum'
+            if has_roas:
+                monthly_agg_dict['ROAS'] = 'mean'
+            if has_ctr:
+                monthly_agg_dict['CTR'] = 'mean'
+            if has_cpa:
+                monthly_agg_dict['CPA'] = 'mean'
+            
+            monthly_data = df_trend.groupby('Month_Year').agg(monthly_agg_dict).reset_index()
+            
+            # Select metrics to display
+            trend_metrics = st.multiselect(
+                'Select metrics to display',
+                options=[col for col in monthly_agg_dict.keys() if col in monthly_data.columns],
+                default=[spend_col] + ([conv_col] if conv_col else []),
+                key='trend_metrics'
+            )
+            
+            if trend_metrics:
+                fig = px.line(
+                    monthly_data,
+                    x='Month_Year',
+                    y=trend_metrics,
+                    title='Monthly Performance Trends',
+                    markers=True
+                )
+                fig.update_layout(height=400, xaxis_title='Month', yaxis_title='Value')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # 3. Funnel Trend Analysis
+        if has_date and impr_col and clicks_col and conv_col:
+            st.markdown("### 🔄 Funnel Performance Trend")
+            
+            df_funnel = df.copy()
+            df_funnel['Date'] = pd.to_datetime(df_funnel['Date'], errors='coerce')
+            df_funnel = df_funnel.dropna(subset=['Date'])
+            df_funnel['Month_Year'] = df_funnel['Date'].dt.to_period('M').astype(str)
+            
+            # Calculate funnel metrics by month
+            funnel_monthly = df_funnel.groupby('Month_Year').agg({
+                impr_col: 'sum',
+                clicks_col: 'sum',
+                conv_col: 'sum'
+            }).reset_index()
+            
+            # Calculate rates
+            funnel_monthly['CTR'] = (funnel_monthly[clicks_col] / funnel_monthly[impr_col] * 100).round(2)
+            funnel_monthly['Conv_Rate'] = (funnel_monthly[conv_col] / funnel_monthly[clicks_col] * 100).round(2)
+            
+            # Add ROAS/CPA if available
+            if has_roas or has_cpa:
+                funnel_agg = {'CTR': 'mean', 'Conv_Rate': 'mean'}
+                if has_roas:
+                    funnel_monthly_roas = df_funnel.groupby('Month_Year')['ROAS'].mean().reset_index()
+                    funnel_monthly = funnel_monthly.merge(funnel_monthly_roas, on='Month_Year', how='left')
+                    funnel_agg['ROAS'] = 'mean'
+                if has_cpa:
+                    funnel_monthly_cpa = df_funnel.groupby('Month_Year')['CPA'].mean().reset_index()
+                    funnel_monthly = funnel_monthly.merge(funnel_monthly_cpa, on='Month_Year', how='left')
+                    funnel_agg['CPA'] = 'mean'
+            
+            # Select funnel metrics
+            funnel_options = ['CTR', 'Conv_Rate']
+            if has_roas:
+                funnel_options.append('ROAS')
+            if has_cpa:
+                funnel_options.append('CPA')
+            
+            selected_funnel = st.multiselect(
+                'Select funnel metrics',
+                options=funnel_options,
+                default=['CTR', 'Conv_Rate'],
+                key='funnel_metrics'
+            )
+            
+            if selected_funnel:
+                fig = px.line(
+                    funnel_monthly,
+                    x='Month_Year',
+                    y=selected_funnel,
+                    title='Funnel Efficiency Over Time',
+                    markers=True
+                )
+                fig.update_layout(height=400, xaxis_title='Month', yaxis_title='Rate / Value')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # 4. Correlation Analysis
+        if spend_col and conv_col and (has_ctr or has_roas):
+            st.markdown("### 🔗 Correlation Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            # Correlation 1: Spend vs Conversions
+            with col1:
+                fig = px.scatter(
+                    df,
+                    x=spend_col,
+                    y=conv_col,
+                    color='Platform' if has_platform else None,
+                    title=f'{spend_col} vs {conv_col}',
+                    trendline='ols',
+                    hover_data=['Campaign_Name'] if 'Campaign_Name' in df.columns else None
+                )
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Correlation 2: CTR vs ROAS or CTR vs Conv Rate
+            with col2:
+                if has_ctr and has_roas:
+                    fig = px.scatter(
+                        df,
+                        x='CTR',
+                        y='ROAS',
+                        color='Platform' if has_platform else None,
+                        title='CTR vs ROAS',
+                        trendline='ols',
+                        hover_data=['Campaign_Name'] if 'Campaign_Name' in df.columns else None
+                    )
+                elif has_ctr and has_conv_rate:
+                    fig = px.scatter(
+                        df,
+                        x='CTR',
+                        y='Conversion_Rate',
+                        color='Platform' if has_platform else None,
+                        title='CTR vs Conversion Rate',
+                        trendline='ols',
+                        hover_data=['Campaign_Name'] if 'Campaign_Name' in df.columns else None
+                    )
+                else:
+                    # Fallback: CPA vs Conversions if available
+                    if has_cpa:
+                        fig = px.scatter(
+                            df,
+                            x='CPA',
+                            y=conv_col,
+                            color='Platform' if has_platform else None,
+                            title=f'CPA vs {conv_col}',
+                            trendline='ols',
+                            hover_data=['Campaign_Name'] if 'Campaign_Name' in df.columns else None
+                        )
+                    else:
+                        fig = None
+                
+                if fig:
+                    fig.update_layout(height=350)
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
         st.markdown("## 🔁 Want to re-run?")
         if st.button("🧹 Clear Analysis", use_container_width=True):
             st.session_state.analysis_complete = False
@@ -618,7 +846,7 @@ with tab_auto:
 # Natural Language Q&A Tab
 # ---------------------------------------------------------------------------
 with tab_hitl:
-    st.markdown("## 💬 Ask Questions in Natural Language")
+    st.markdown("## 💬 Ask Questions")
     if st.session_state.df is None:
         st.info("Upload data in the Auto Analysis tab before running HITL queries.")
     else:
@@ -731,6 +959,94 @@ with tab_hitl:
                     "query_results.csv",
                     "text/csv",
                 )
+                
+                # ===== AUTO-GENERATE CHART FOR Q&A RESULTS =====
+                st.markdown("### 📊 Visualization")
+                
+                # Detect numeric and categorical columns
+                numeric_cols = results_df.select_dtypes(include=['number']).columns.tolist()
+                categorical_cols = results_df.select_dtypes(include=['object', 'category']).columns.tolist()
+                
+                # Smart chart generation based on data structure
+                if len(results_df) > 0:
+                    # Case 1: Single row with multiple metrics (show as bar chart)
+                    if len(results_df) == 1 and len(numeric_cols) > 1:
+                        chart_data = pd.DataFrame({
+                            'Metric': numeric_cols,
+                            'Value': [results_df[col].iloc[0] for col in numeric_cols]
+                        })
+                        fig = px.bar(chart_data, x='Metric', y='Value', title='Query Results')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Case 2: Multiple rows with 1 categorical + 1-2 numeric (bar/line chart)
+                    elif len(categorical_cols) >= 1 and len(numeric_cols) >= 1:
+                        x_col = categorical_cols[0]
+                        
+                        # If there are 2 numeric columns, let user choose or show both
+                        if len(numeric_cols) == 1:
+                            y_col = numeric_cols[0]
+                            fig = px.bar(results_df, x=x_col, y=y_col, title=f'{y_col} by {x_col}')
+                        elif len(numeric_cols) == 2:
+                            # Dual metric chart
+                            from plotly.subplots import make_subplots
+                            import plotly.graph_objects as go
+                            
+                            fig = make_subplots(specs=[[{"secondary_y": True}]])
+                            fig.add_trace(
+                                go.Bar(x=results_df[x_col], y=results_df[numeric_cols[0]], name=numeric_cols[0], marker_color='#3498db'),
+                                secondary_y=False,
+                            )
+                            fig.add_trace(
+                                go.Scatter(x=results_df[x_col], y=results_df[numeric_cols[1]], name=numeric_cols[1], mode='lines+markers', marker_color='#e74c3c'),
+                                secondary_y=True,
+                            )
+                            fig.update_xaxes(title_text=x_col)
+                            fig.update_yaxes(title_text=numeric_cols[0], secondary_y=False)
+                            fig.update_yaxes(title_text=numeric_cols[1], secondary_y=True)
+                            fig.update_layout(title_text=f'{numeric_cols[0]} & {numeric_cols[1]} by {x_col}')
+                        else:
+                            # Multiple metrics - show first 3
+                            y_cols = numeric_cols[:3]
+                            fig = px.bar(results_df, x=x_col, y=y_cols, title=f'Metrics by {x_col}', barmode='group')
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Case 3: Time series data (Date column + numeric)
+                    elif any('date' in col.lower() or 'month' in col.lower() or 'year' in col.lower() for col in categorical_cols) and len(numeric_cols) >= 1:
+                        date_col = next((col for col in categorical_cols if 'date' in col.lower() or 'month' in col.lower() or 'year' in col.lower()), categorical_cols[0])
+                        y_cols = numeric_cols[:3]  # Show up to 3 metrics
+                        fig = px.line(results_df, x=date_col, y=y_cols, title=f'Trend Analysis', markers=True)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Case 4: Just numeric columns (correlation heatmap or scatter)
+                    elif len(numeric_cols) >= 2 and len(results_df) > 3:
+                        if len(numeric_cols) == 2:
+                            fig = px.scatter(results_df, x=numeric_cols[0], y=numeric_cols[1], 
+                                           title=f'{numeric_cols[0]} vs {numeric_cols[1]}', trendline='ols')
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            # Show correlation heatmap
+                            import plotly.figure_factory as ff
+                            corr_matrix = results_df[numeric_cols].corr()
+                            fig = ff.create_annotated_heatmap(
+                                z=corr_matrix.values,
+                                x=corr_matrix.columns.tolist(),
+                                y=corr_matrix.columns.tolist(),
+                                colorscale='RdBu',
+                                showscale=True
+                            )
+                            fig.update_layout(title='Correlation Matrix')
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Case 5: Pie chart for percentage/share data
+                    elif len(categorical_cols) == 1 and len(numeric_cols) == 1 and len(results_df) <= 10:
+                        fig = px.pie(results_df, names=categorical_cols[0], values=numeric_cols[0], 
+                                    title=f'{numeric_cols[0]} Distribution')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    else:
+                        st.info("💡 Data structure doesn't match common chart patterns. Showing table view above.")
+                
             else:
                 st.info("No data returned.")
 
