@@ -86,16 +86,9 @@ flake8
 mypy
 ipython
 
-<<<<<<< HEAD
-# Streamlit (Demo Dashboard)
-streamlit
-streamlit-aggrid==0.3.4.post3
-streamlit-option-menu==0.3.12
-=======
 # Streamlit Extensions
 streamlit-aggrid
 streamlit-option-menu
->>>>>>> a82090f697287ca8925a870eb2ccff0a3996bb3a
 
 # Web Scraping - NO VERSION PINS (fixes lxml build error)
 beautifulsoup4
