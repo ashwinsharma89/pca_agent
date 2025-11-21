@@ -8,6 +8,7 @@ from typing import Optional, Union, Tuple
 from pathlib import Path
 from loguru import logger
 import io
+import re
 
 
 class DataLoadError(Exception):
@@ -375,4 +376,106 @@ def safe_load_csv(file_path: Union[str, Path], **kwargs) -> Optional[pd.DataFram
     df, error = DataLoader.load_csv(file_path, **kwargs)
     if error:
         logger.error(f"Failed to load CSV: {error}")
+    return df
+
+
+def normalize_campaign_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize campaign dataframe column names to standard format.
+    Maps common variations to: Campaign_Name, Platform, Spend, Conversions, Revenue, etc.
+    """
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    def _norm(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower())
+
+    column_mapping = {
+        # Campaign identifiers
+        "campaign_name": "Campaign_Name",
+        "campaign": "Campaign_Name",
+        "campaignid": "Campaign_Name",
+        "campaign_id": "Campaign_Name",
+        "campaign_name_full": "Campaign_Name",
+        
+        # Platform/Channel
+        "platform": "Platform",
+        "channel": "Platform",
+        "publisher": "Platform",
+        "network": "Platform",
+        "source": "Platform",
+        
+        # Spend/Cost
+        "spend": "Spend",
+        "total_spend": "Spend",
+        "total_spent": "Spend",
+        "media_spend": "Spend",
+        "ad_spend": "Spend",
+        "cost": "Spend",
+        "costs": "Spend",
+        "amount_spent": "Spend",
+        
+        # Conversions
+        "conversions": "Conversions",
+        "conv": "Conversions",
+        "site_visit": "Conversions",
+        "site_visits": "Conversions",
+        "conversion": "Conversions",
+        
+        # Revenue
+        "revenue": "Revenue",
+        "conversion_value": "Revenue",
+        "total_revenue": "Revenue",
+        
+        # Impressions
+        "impressions": "Impressions",
+        "impr": "Impressions",
+        "impression": "Impressions",
+        
+        # Clicks
+        "clicks": "Clicks",
+        "click": "Clicks",
+        
+        # Date
+        "date": "Date",
+        "day": "Date",
+        "report_date": "Date",
+        
+        # Placement
+        "placement": "Placement",
+        "ad_placement": "Placement",
+    }
+
+    existing = set(df.columns)
+    rename_map = {}
+    for col in df.columns:
+        key = _norm(col)
+        target = column_mapping.get(key)
+        if target and target not in existing:
+            rename_map[col] = target
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    # Convert Spend to numeric
+    if "Spend" in df.columns:
+        spend_series = df["Spend"]
+        if not pd.api.types.is_numeric_dtype(spend_series):
+            spend_series = spend_series.astype(str).str.replace(r"[^\d\.\-]", "", regex=True)
+            df["Spend"] = pd.to_numeric(spend_series, errors="coerce").fillna(0)
+    
+    # Convert Conversions to numeric
+    if "Conversions" in df.columns:
+        conv_series = df["Conversions"]
+        if not pd.api.types.is_numeric_dtype(conv_series):
+            conv_series = conv_series.astype(str).str.replace(r"[^\d\.\-]", "", regex=True)
+            df["Conversions"] = pd.to_numeric(conv_series, errors="coerce").fillna(0)
+    
+    # Convert Revenue to numeric
+    if "Revenue" in df.columns:
+        rev_series = df["Revenue"]
+        if not pd.api.types.is_numeric_dtype(rev_series):
+            rev_series = rev_series.astype(str).str.replace(r"[^\d\.\-]", "", regex=True)
+            df["Revenue"] = pd.to_numeric(rev_series, errors="coerce").fillna(0)
+
     return df

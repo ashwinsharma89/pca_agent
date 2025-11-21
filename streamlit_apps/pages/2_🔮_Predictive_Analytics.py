@@ -27,7 +27,7 @@ from src.predictive import (
 
 # Import shared components and utilities
 from streamlit_apps.components import render_header, render_footer
-from streamlit_apps.utils import apply_custom_css, init_session_state
+from streamlit_apps.utils import apply_custom_css, init_session_state, load_historical_data
 from streamlit_apps.config import APP_TITLE
 
 # Load environment variables
@@ -98,8 +98,12 @@ with st.sidebar:
     )
     
     if uploaded_file:
-        st.session_state.historical_data = pd.read_csv(uploaded_file)
-        st.success(f"✅ Loaded {len(st.session_state.historical_data)} campaigns")
+        data = load_historical_data(uploaded_file)
+        if data is not None:
+            st.session_state.historical_data = data
+            st.success(f"✅ Loaded {len(data)} campaigns")
+        else:
+            st.error("❌ Error loading data")
     
     # Quick load sample data
     if st.session_state.historical_data is None:
@@ -608,8 +612,12 @@ with tab4:
         )
         
         if uploaded_file_main:
-            st.session_state.historical_data = pd.read_csv(uploaded_file_main)
-            st.success(f"✅ Loaded {len(st.session_state.historical_data)} campaigns")
+            data = load_historical_data(uploaded_file_main)
+            if data is not None:
+                st.session_state.historical_data = data
+                st.success(f"✅ Loaded {len(data)} campaigns")
+            else:
+                st.error("❌ Error loading data")
         
         # Show sample data option
         if st.session_state.historical_data is None:
@@ -617,9 +625,13 @@ with tab4:
             
             if st.button("📊 Load Sample Data", use_container_width=True):
                 try:
-                    st.session_state.historical_data = pd.read_csv('data/historical_campaigns_sample.csv')
-                    st.success(f"✅ Loaded {len(st.session_state.historical_data)} sample campaigns")
-                    st.rerun()
+                    data = load_historical_data(use_sample=True)
+                    if data is not None:
+                        st.session_state.historical_data = data
+                        st.success(f"✅ Loaded {len(data)} sample campaigns")
+                        st.rerun()
+                    else:
+                        st.error("Sample data not found")
                 except Exception as e:
                     st.error(f"Error loading sample data: {str(e)}")
         

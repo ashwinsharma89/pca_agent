@@ -2,6 +2,7 @@
 # At the top of streamlit_app_hitl.py
 import sys
 import os
+import io
 from pathlib import Path
 
 # Add both current directory and parent to Python path for Streamlit Cloud
@@ -35,6 +36,7 @@ from src.analytics import MediaAnalyticsExpert
 from src.evaluation.query_tracker import QueryTracker
 from src.query_engine.nl_to_sql import NaturalLanguageQueryEngine
 from src.visualization import SmartChartGenerator
+from src.utils.data_loader import DataLoader, normalize_campaign_dataframe
 #from src.query_engine.smart_interpretation import SmartQueryInterpreter
 #from src.orchestration.query_orchestrator import QueryOrchestrator
 
@@ -448,6 +450,8 @@ def load_cached_df_if_available():
     if st.session_state.get("df") is None and os.path.exists(LAST_CSV_PATH):
         try:
             df_cached = pd.read_csv(LAST_CSV_PATH)
+            # Apply normalization to cached data too
+            df_cached = normalize_campaign_dataframe(df_cached)
             st.session_state.df = df_cached
             st.session_state.df_loaded_from_cache = True
         except Exception:
@@ -594,12 +598,32 @@ with tab_auto:
                                 st.info(f"📄 Reading sheet: {sheet_names[0]}")
                     else:
                         df = pd.read_csv(uploaded_file)
+                    
+                    # Show original columns for debugging
+                    original_cols = df.columns.tolist()
+                    
+                    # Normalize column names
+                    df = normalize_campaign_dataframe(df)
                     st.session_state.df = df
                     try:
                         df.to_csv(LAST_CSV_PATH, index=False)
                     except Exception:
                         pass
+                    
+                    # Show what was mapped
+                    normalized_cols = df.columns.tolist()
                     st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                    
+                    # Show column mapping info
+                    if original_cols != normalized_cols:
+                        with st.expander("🔄 Column Mapping Applied", expanded=False):
+                            mapping_info = []
+                            for orig, norm in zip(original_cols, normalized_cols):
+                                if orig != norm:
+                                    mapping_info.append(f"✓ `{orig}` → `{norm}`")
+                                else:
+                                    mapping_info.append(f"  `{orig}` (unchanged)")
+                            st.markdown("\n".join(mapping_info))
 
                     with st.expander("📋 Data Preview", expanded=True):
                         st.dataframe(df.head(10), use_container_width=True)

@@ -11,6 +11,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
+from streamlit_apps.utils.data_loader import load_historical_data
 
 # Import predictive modules
 from src.predictive import (
@@ -120,18 +121,26 @@ with st.sidebar:
     )
     
     if uploaded_file:
-        st.session_state.historical_data = pd.read_csv(uploaded_file)
-        st.success(f"✅ Loaded {len(st.session_state.historical_data)} campaigns")
+        data = load_historical_data(uploaded_file)
+        if data is not None:
+            st.session_state.historical_data = data
+            st.success(f"✅ Loaded {len(data)} campaigns")
+        else:
+            st.error("❌ Error loading data")
     
     # Quick load sample data
     if st.session_state.historical_data is None:
         if st.button("📊 Load Sample Data", key='sidebar_sample'):
             try:
-                st.session_state.historical_data = pd.read_csv('data/historical_campaigns_sample.csv')
-                st.success("✅ Sample data loaded!")
-                st.rerun()
-            except:
-                st.error("Sample data not found")
+                data = load_historical_data(use_sample=True)
+                if data is not None:
+                    st.session_state.historical_data = data
+                    st.success("✅ Sample data loaded!")
+                    st.rerun()
+                else:
+                    st.error("Sample data not found")
+            except Exception as e:
+                st.error(f"Error loading sample data: {str(e)}")
 
 # Main header
 st.markdown('<h1 class="main-header">🔮 Predictive Analytics</h1>', unsafe_allow_html=True)
@@ -635,8 +644,12 @@ with tab4:
         )
         
         if uploaded_file_main:
-            st.session_state.historical_data = pd.read_csv(uploaded_file_main)
-            st.success(f"✅ Loaded {len(st.session_state.historical_data)} campaigns")
+            data = load_historical_data(uploaded_file_main)
+            if data is not None:
+                st.session_state.historical_data = data
+                st.success(f"✅ Loaded {len(data)} campaigns")
+            else:
+                st.error("❌ Error loading data")
         
         # Show sample data option
         if st.session_state.historical_data is None:
@@ -644,9 +657,13 @@ with tab4:
             
             if st.button("📊 Load Sample Data", use_container_width=True):
                 try:
-                    st.session_state.historical_data = pd.read_csv('data/historical_campaigns_sample.csv')
-                    st.success(f"✅ Loaded {len(st.session_state.historical_data)} sample campaigns")
-                    st.rerun()
+                    data = load_historical_data(use_sample=True)
+                    if data is not None:
+                        st.session_state.historical_data = data
+                        st.success(f"✅ Loaded {len(data)} sample campaigns")
+                        st.rerun()
+                    else:
+                        st.error("Sample data not found")
                 except Exception as e:
                     st.error(f"Error loading sample data: {str(e)}")
         

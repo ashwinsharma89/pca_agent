@@ -5,6 +5,7 @@ import pandas as pd
 import joblib
 from pathlib import Path
 from ..config import DATA_DIR, MODELS_DIR
+from src.utils.data_loader import DataLoader
 
 
 def load_historical_data(file_path=None, use_sample=False):
@@ -21,20 +22,23 @@ def load_historical_data(file_path=None, use_sample=False):
     try:
         if use_sample:
             sample_path = DATA_DIR / "historical_campaigns_sample.csv"
-            if sample_path.exists():
-                return pd.read_csv(sample_path)
-            else:
+            if not sample_path.exists():
                 return None
-        
+            df, error = DataLoader.load_csv(sample_path, validate=False)
+            if error:
+                print(f"Error loading sample data: {error}")
+                return None
+            return df
+
         if file_path:
-            if isinstance(file_path, str):
-                return pd.read_csv(file_path)
-            else:
-                # Streamlit UploadedFile
-                return pd.read_csv(file_path)
-        
+            df, error = DataLoader.load_csv(file_path, validate=False)
+            if error:
+                print(f"Error loading data: {error}")
+                return None
+            return df
+
         return None
-    
+
     except Exception as e:
         print(f"Error loading data: {str(e)}")
         return None
@@ -101,7 +105,11 @@ def load_csv_data(file_path):
         pandas.DataFrame or None
     """
     try:
-        return pd.read_csv(file_path)
+        df, error = DataLoader.load_csv(file_path, validate=False)
+        if error:
+            print(f"Error loading CSV: {error}")
+            return None
+        return df
     except Exception as e:
         print(f"Error loading CSV: {str(e)}")
         return None

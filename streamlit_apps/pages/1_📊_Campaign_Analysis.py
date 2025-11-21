@@ -18,6 +18,7 @@ import os
 from datetime import datetime
 import uuid
 from dotenv import load_dotenv
+from src.utils.data_loader import normalize_campaign_dataframe
 
 # Import shared components and utilities
 from streamlit_apps.components import render_header, render_footer
@@ -133,6 +134,7 @@ Black_Friday_2024,google_ads,2024-11-24,2500000,50000,2.0,1800,85000,1.70,47.22,
             if uploaded_file:
                 try:
                     df = pd.read_csv(uploaded_file)
+                    df = normalize_campaign_dataframe(df)
                     st.session_state.df = df
                     
                     st.success(f"✅ Loaded {len(df)} rows with {len(df.columns)} columns")

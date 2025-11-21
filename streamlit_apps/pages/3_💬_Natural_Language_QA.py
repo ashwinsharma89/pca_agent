@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from streamlit_apps.components import render_header, render_footer
 from streamlit_apps.utils import apply_custom_css, init_session_state, load_historical_data
 from streamlit_apps.config import APP_TITLE
+from src.utils.data_loader import normalize_campaign_dataframe
 
 # Load environment variables
 load_dotenv()
@@ -115,6 +116,7 @@ with tab1:
             if uploaded_file:
                 try:
                     df = pd.read_csv(uploaded_file)
+                    df = normalize_campaign_dataframe(df)
                     st.session_state.qa_data = df
                     st.success(f"✅ Loaded {len(df)} rows with {len(df.columns)} columns")
                     st.rerun()
@@ -129,7 +131,8 @@ with tab1:
                 try:
                     sample_data = load_historical_data(use_sample=True)
                     if sample_data is not None:
-                        st.session_state.qa_data = sample_data
+                        df = normalize_campaign_dataframe(sample_data)
+                        st.session_state.qa_data = df
                         st.success("✅ Sample data loaded!")
                         st.rerun()
                     else:
