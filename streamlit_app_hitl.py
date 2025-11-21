@@ -702,6 +702,26 @@ with tab_auto:
         analysis = st.session_state.analysis_data
         df = st.session_state.df
 
+        # Show data preview at the top after analysis
+        with st.expander("📋 Loaded Data Preview", expanded=False):
+            st.dataframe(df.head(20), use_container_width=True)
+            col_a, col_b, col_c, col_d = st.columns(4)
+            
+            col_a.metric("Rows", len(df))
+            
+            campaign_col = _get_column(df, "campaign")
+            campaigns = df[campaign_col].nunique() if campaign_col else 0
+            col_b.metric("Campaigns", campaigns)
+            
+            platforms = df["Platform"].nunique() if "Platform" in df.columns else 0
+            col_c.metric("Platforms", platforms)
+            
+            spend_col = _get_column(df, "spend")
+            total_spend = float(df[spend_col].sum()) if spend_col else 0.0
+            col_d.metric("Total Spend", f"${total_spend:,.0f}")
+        
+        st.markdown("---")
+
         # Quick Navigation
         st.markdown("## 🎯 Quick Navigation")
         nav_cols = st.columns(6)
@@ -716,6 +736,14 @@ with tab_auto:
         if nav_cols[4].button("🧭 Overview", use_container_width=True):
             st.markdown('<a href="#management-overview"></a>', unsafe_allow_html=True)
         if nav_cols[5].button("🔁 Re-run", use_container_width=True):
+            st.session_state.analysis_complete = False
+            st.session_state.analysis_data = None
+            st.session_state.df = None
+            st.rerun()
+        
+        # Add "Load New Data" button
+        st.markdown("")
+        if st.button("📤 Load New Data", type="secondary", use_container_width=False):
             st.session_state.analysis_complete = False
             st.session_state.analysis_data = None
             st.session_state.df = None

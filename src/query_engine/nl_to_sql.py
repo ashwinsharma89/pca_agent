@@ -99,9 +99,14 @@ class NaturalLanguageQueryEngine:
             df: DataFrame with campaign data
             table_name: Name for the table
         """
-        # Convert Date column to datetime if it exists
+        # Convert Date-related columns to datetime if they exist
         df_copy = df.copy()
-        date_columns = [col for col in df_copy.columns if 'date' in col.lower()]
+        
+        # Detect date-related columns (date, week, week range, day, month, etc.)
+        date_keywords = ['date', 'week', 'day', 'month', 'year', 'time', 'period']
+        date_columns = [col for col in df_copy.columns 
+                       if any(keyword in col.lower() for keyword in date_keywords)]
+        
         for col in date_columns:
             try:
                 df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce')
@@ -164,26 +169,44 @@ Examples:
 
 Always anchor relative time windows on the *latest date present in the data*, not on CURRENT_DATE.
 
+🔴 CRITICAL: DATE COLUMN FLEXIBILITY
+- The date column may NOT be named "Date"
+- Look for columns with these keywords: date, week, week_range, week range, day, month, year, time, period
+- Common examples: "Week Range", "Week", "Date Range", "Day", "Month", "Period"
+- ALWAYS check the schema for the actual date column name before writing queries
+- Use the EXACT column name from the schema (case-sensitive)
+
 1) Find the campaign end date (max_date) from the table first, using a CTE pattern like:
 
    WITH bounds AS (
-       SELECT MAX(Date) AS max_date
+       SELECT MAX([actual_date_column_name]) AS max_date
        FROM campaigns
    )
+   
+   Replace [actual_date_column_name] with the real column name from the schema.
 
 2) Then express natural language time windows relative to bounds.max_date (campaign life):
 
-- "last 2 weeks"      -> Date >= max_date - INTERVAL 14 DAY
-- "previous 2 weeks"  -> Date >= max_date - INTERVAL 28 DAY AND Date < max_date - INTERVAL 14 DAY
-- "last month"        -> Date >= DATE_TRUNC('month', max_date - INTERVAL 1 MONTH)
-- "last 2 months"     -> Date >= max_date - INTERVAL 2 MONTH
-- "last 6 months"     -> Date >= max_date - INTERVAL 6 MONTH
-- "last 2 years"      -> Date >= max_date - INTERVAL 2 YEAR
+- "last 2 weeks"      -> [date_col] >= max_date - INTERVAL 14 DAY
+- "previous 2 weeks"  -> [date_col] >= max_date - INTERVAL 28 DAY AND [date_col] < max_date - INTERVAL 14 DAY
+- "last month"        -> [date_col] >= DATE_TRUNC('month', max_date - INTERVAL 1 MONTH)
+- "last 2 months"     -> [date_col] >= max_date - INTERVAL 2 MONTH
+- "last 6 months"     -> [date_col] >= max_date - INTERVAL 6 MONTH
+- "last 2 years"      -> [date_col] >= max_date - INTERVAL 2 YEAR
 - "couple of months"  -> treat as 2 months (use 2 MONTH window)
-- "week-over-week"    -> GROUP BY DATE_TRUNC('week', Date)
-- "month-over-month"  -> GROUP BY DATE_TRUNC('month', Date)
-- "Q3 vs Q2"          -> use QUARTER(Date) or DATE_TRUNC('quarter', Date)
-- "year-over-year"    -> compare same period across different years using YEAR(Date)
+- "week-over-week"    -> GROUP BY DATE_TRUNC('week', [date_col])
+- "month-over-month"  -> GROUP BY DATE_TRUNC('month', [date_col])
+- "Q3 vs Q2"          -> use QUARTER([date_col]) or DATE_TRUNC('quarter', [date_col])
+- "year-over-year"    -> compare same period across different years using YEAR([date_col])
+- "by day"            -> GROUP BY [date_col] (use the actual date column name)
+- "by week"           -> GROUP BY [date_col] or DATE_TRUNC('week', [date_col])
+- "by month"          -> GROUP BY DATE_TRUNC('month', [date_col])
+
+EXAMPLE: If schema has "Week Range" column and user asks "show total spend by day":
+SELECT "Week Range", SUM(Cost) AS Total_Spend
+FROM campaigns
+GROUP BY "Week Range"
+ORDER BY "Week Range"
 
 For comparisons ("last X vs previous X") you should:
 - Use a CTE that joins every row with max_date from bounds
