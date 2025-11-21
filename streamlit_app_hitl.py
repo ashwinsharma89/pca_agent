@@ -1,4 +1,4 @@
-"""Unified PCA Agent Streamlit app with auto-analysis + HITL Q&A."""
+"""Unified PCA Agent Streamlit app with auto-analysis and Q&A."""
 # At the top of streamlit_app_hitl.py
 import sys
 import os
@@ -45,7 +45,7 @@ LAST_CSV_PATH = os.path.join(CACHE_DIR, "last_campaign_data.csv")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 st.set_page_config(
-    page_title="PCA Agent - Auto Analysis + HITL Q&A",
+    page_title="PCA Agent - Auto Analysis + Q&A",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -483,10 +483,9 @@ with st.sidebar:
         """
         - 📊 Auto-insights dashboard
         - 💡 Executive summaries & metrics
-        - 🔮 Predictive & ROAS views
+        - 📈 Performance analytics & visualizations
         - 💬 Natural language Q&A
-        - 🤝 Human-in-the-loop disambiguation
-        - 📈 Traceability & evaluation metrics
+        - 📜 Query history & tracking
         """
     )
 
@@ -508,7 +507,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### 📊 HITL Metrics")
+    st.markdown("### 📊 Q&A Metrics")
     metrics = st.session_state.query_tracker.get_metrics_summary()
     col_a, col_b = st.columns(2)
     with col_a:
@@ -529,7 +528,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 st.markdown('<h1 class="main-header">PCA Agent Intelligence Hub</h1>', unsafe_allow_html=True)
 st.markdown(
-    "**Auto-analysis, predictive insights, and human-in-the-loop Q&A in one place.**"
+    "**Automated campaign analysis with AI-powered insights and natural language Q&A.**"
 )
 st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
@@ -537,7 +536,7 @@ st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_auto, tab_hitl, tab_history, tab_metrics = st.tabs(
+tab_auto, tab_qa, tab_history, tab_metrics = st.tabs(
     [
         "📊 Auto Analysis",
         "💬 Q&A",
@@ -1274,10 +1273,10 @@ with tab_auto:
 # ---------------------------------------------------------------------------
 # Natural Language Q&A Tab
 # ---------------------------------------------------------------------------
-with tab_hitl:
+with tab_qa:
     st.markdown("## 💬 Ask Questions")
     if st.session_state.df is None:
-        st.info("Upload data in the Auto Analysis tab before running HITL queries.")
+        st.info("Upload data in the Auto Analysis tab before running queries.")
     else:
         # Lazily initialize the NL → SQL engine and orchestrator
         if st.session_state.query_engine is None:
@@ -1566,7 +1565,7 @@ with tab_history:
     else:
         query_df = st.session_state.query_tracker.get_all_queries(limit=100)
         if query_df.empty:
-            st.info("No queries yet. Run HITL Q&A to populate history.")
+            st.info("No queries yet. Run Q&A to populate history.")
         else:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total", len(query_df))
@@ -1661,10 +1660,10 @@ with tab_history:
 # Metrics tab
 # ---------------------------------------------------------------------------
 with tab_metrics:
-    st.markdown("## 📈 HITL Performance Analytics")
+    st.markdown("## 📈 Q&A Performance Analytics")
     query_df = st.session_state.query_tracker.get_all_queries(limit=1000)
     if query_df.empty:
-        st.info("Run a few HITL queries to unlock analytics.")
+        st.info("Run a few queries to unlock analytics.")
     else:
         interp_accuracy = (
             query_df["selected_interpretation_index"].fillna(-1) == 0
