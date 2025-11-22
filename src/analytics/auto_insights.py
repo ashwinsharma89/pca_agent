@@ -466,19 +466,32 @@ Focus on recommendations that can be implemented immediately with clear tactical
         clicks_col = self._get_column(df, 'clicks')
         impr_col = self._get_column(df, 'impressions')
         
-        # 1. High ROAS campaigns that could scale
+        # 1. High ROAS campaigns that could scale (limit to top 3)
         if 'ROAS' in df.columns and spend_col:
             try:
                 high_performers = df[df['ROAS'] > 4.0].sort_values('ROAS', ascending=False)
-                for _, row in high_performers.head(2).iterrows():
+                top_campaigns = []
+                for _, row in high_performers.head(3).iterrows():
+                    campaign_name = row.get('Campaign_Name', 'Unknown')
+                    top_campaigns.append(campaign_name)
+                
+                if top_campaigns:
+                    total_current_spend = high_performers.head(3)[spend_col].sum()
+                    avg_roas = high_performers.head(3)['ROAS'].mean()
+                    potential_revenue = total_current_spend * 0.75 * avg_roas  # 75% budget increase
+                    
+                    campaigns_text = ", ".join(top_campaigns[:3])
+                    if len(top_campaigns) > 3:
+                        campaigns_text += f" and {len(top_campaigns) - 3} more"
+                    
                     opportunities.append({
-                        "type": "Scale Winner (ROAS)",
-                        "campaign": row.get('Campaign_Name', 'Unknown'),
-                        "platform": row.get('Platform', 'Unknown'),
-                        "current_roas": float(row['ROAS']),
-                        "current_spend": float(row[spend_col]),
-                        "opportunity": f"ROAS of {float(row['ROAS']):.2f}x - Increase budget by 50-100% to scale",
-                        "potential_impact": f"Could generate ${float(row[spend_col]) * 0.5 * float(row['ROAS']):,.0f} additional revenue"
+                        "type": "Scale Winners",
+                        "campaigns": top_campaigns[:3],
+                        "details": f"High-performing campaigns with average ROAS of {avg_roas:.2f}x",
+                        "why_it_matters": f"These campaigns ({campaigns_text}) are delivering exceptional returns",
+                        "recommended_action": f"Increase budget by 50-100% across these {len(top_campaigns[:3])} campaigns",
+                        "expected_impact": f"Could generate ${potential_revenue:,.0f} in additional revenue",
+                        "current_metrics": f"Current spend: ${total_current_spend:,.0f}, Avg ROAS: {avg_roas:.2f}x"
                     })
             except Exception as e:
                 logger.warning(f"Could not identify ROAS scale winners: {e}")
@@ -623,7 +636,8 @@ Focus on recommendations that can be implemented immediately with clear tactical
             except Exception as e:
                 logger.warning(f"Could not calculate seasonal opportunities: {e}")
         
-        return opportunities
+        # Limit to top 5 opportunities
+        return opportunities[:5]
     
     def _assess_risks(self, df: pd.DataFrame, metrics: Dict) -> List[Dict[str, Any]]:
         """Assess risks and red flags across multiple KPIs."""
@@ -631,17 +645,24 @@ Focus on recommendations that can be implemented immediately with clear tactical
         
         spend_col = self._get_column(df, 'spend')
         
-        # 1. Low ROAS campaigns
+        # 1. Low ROAS campaigns with campaign names
         if 'ROAS' in df.columns and spend_col:
-            poor_performers = df[df['ROAS'] < 2.5]
+            poor_performers = df[df['ROAS'] < 2.5].sort_values('ROAS')
             if len(poor_performers) > 0:
                 total_waste = poor_performers[spend_col].sum()
+                worst_campaigns = []
+                for _, row in poor_performers.head(3).iterrows():
+                    campaign_name = row.get('Campaign_Name', 'Unknown')
+                    worst_campaigns.append(f"{campaign_name} (ROAS: {row['ROAS']:.2f}x)")
+                
+                campaigns_text = ", ".join(worst_campaigns)
                 risks.append({
                     "severity": "High",
                     "risk": "Low ROAS Campaigns",
                     "details": f"{len(poor_performers)} campaigns with ROAS below 2.5x",
                     "impact": f"${total_waste:,.0f} at risk",
-                    "action": "Review and optimize or pause these campaigns immediately"
+                    "worst_performers": campaigns_text,
+                    "action": f"Review and optimize or pause these campaigns immediately. Focus on: {campaigns_text}"
                 })
         
         # 2. High CPA campaigns
@@ -735,7 +756,8 @@ Focus on recommendations that can be implemented immediately with clear tactical
                     "action": "Investigate root cause and implement corrective measures"
                 })
         
-        return risks
+        # Limit to top 5 risks
+        return risks[:5]
     
     def _optimize_budget(self, df: pd.DataFrame, metrics: Dict) -> Dict[str, Any]:
         """Suggest budget optimization."""
@@ -786,33 +808,37 @@ Focus on recommendations that can be implemented immediately with clear tactical
             "top_recommendations": recommendations[:3] if recommendations else []
         }
         
-        prompt = f"""Create a concise executive summary (3-4 paragraphs) for a CMO based on this comprehensive campaign analysis:
+        prompt = f"""Create a concise executive summary (4 complete paragraphs) for a CMO based on this comprehensive campaign analysis:
 
 Data:
 {json.dumps(summary_data, indent=2)}
 
 IMPORTANT INSTRUCTIONS:
-1. Analyze performance across MULTIPLE KPIs (not just ROAS):
+1. Write EXACTLY 4 complete, well-structured paragraphs:
+   - Paragraph 1: Overall campaign performance overview with key numbers (spend, conversions, platforms)
+   - Paragraph 2: Multi-KPI analysis - discuss CTR, CPC, CPA, Conversion Rate, and ROAS performance with specific metrics
+   - Paragraph 3: Key wins and challenges - what's working well and what needs improvement
+   - Paragraph 4: Top 2-3 strategic recommendations with expected business impact
+
+2. Each paragraph must be:
+   - Complete sentences (no fragments)
+   - 3-5 sentences long
+   - Include specific numbers and percentages
+   - Professional, executive-friendly language
+
+3. Analyze performance across MULTIPLE KPIs:
    - CTR (Click-Through Rate) - measures ad engagement
-   - CPC (Cost Per Click) - measures click efficiency
+   - CPC (Cost Per Click) - measures click efficiency  
    - CPA (Cost Per Acquisition) - measures conversion cost
    - Conversion Rate - measures funnel efficiency
    - ROAS (Return on Ad Spend) - measures revenue efficiency
 
-2. Identify patterns across KPIs:
+4. Identify patterns:
    - High CTR but low conversion rate = landing page issue
    - Low CPC with high conversion rate = efficient targeting
    - High impressions but low CTR = creative fatigue
 
-3. Provide balanced assessment:
-   - Overall performance across all KPIs
-   - Key wins (which KPIs are strong)
-   - Key challenges (which KPIs need improvement)
-   - Top 2-3 strategic recommendations with expected impact
-
-4. Use professional, executive-friendly language with specific numbers.
-
-Write in 3-4 paragraphs focusing on actionable insights across the full marketing funnel."""
+Write in clear, complete paragraphs. Do NOT use bullet points or incomplete sentences."""
 
         try:
             system_prompt = "You are a strategic marketing consultant writing for C-level executives. Focus on multi-KPI analysis, not just ROAS."
@@ -917,15 +943,85 @@ Platform Performance (Multi-KPI View):
         return recommendations
     
     def _analyze_funnel(self, df: pd.DataFrame, metrics: Dict) -> Dict[str, Any]:
-        """Analyze marketing funnel performance."""
+        """Analyze marketing funnel performance with intelligent stage detection."""
         funnel = {
             "stages": {},
             "conversion_rates": {},
             "drop_off_points": [],
-            "recommendations": []
+            "recommendations": [],
+            "by_funnel_stage": {}
         }
         
-        # Calculate funnel metrics
+        # Helper function to detect funnel stage from text
+        def detect_funnel_stage(text: str) -> str:
+            """Detect funnel stage from campaign/placement/ad set name."""
+            if not isinstance(text, str):
+                return "Unknown"
+            text_lower = text.lower()
+            
+            # Awareness patterns
+            awareness_patterns = ['awareness', 'aw', 'awa', 'tofu', 'top-of-funnel', 'brand', 'reach', 'impression']
+            if any(pattern in text_lower for pattern in awareness_patterns):
+                return "Awareness"
+            
+            # Consideration patterns
+            consideration_patterns = ['consideration', 'co', 'cons', 'mofu', 'mid-funnel', 'engagement', 'interest', 'video view']
+            if any(pattern in text_lower for pattern in consideration_patterns):
+                return "Consideration"
+            
+            # Conversion patterns
+            conversion_patterns = ['conversion', 'conv', 'bofu', 'bottom-funnel', 'purchase', 'lead', 'signup', 'sale', 'retargeting', 'remarketing']
+            if any(pattern in text_lower for pattern in conversion_patterns):
+                return "Conversion"
+            
+            return "Unknown"
+        
+        # Try to detect funnel stages from column names
+        funnel_col = None
+        for col in ['Funnel_Stage', 'Funnel', 'Stage', 'Campaign_Type']:
+            if col in df.columns:
+                funnel_col = col
+                break
+        
+        # If no explicit funnel column, try to infer from campaign/placement/ad set names
+        if funnel_col is None:
+            df_copy = df.copy()
+            # Check multiple columns for funnel indicators
+            for col in ['Campaign_Name', 'Placement', 'Placement_Name', 'Ad_Set', 'Ad_Group', 'Adset_Name']:
+                if col in df_copy.columns:
+                    df_copy['Detected_Funnel_Stage'] = df_copy[col].apply(detect_funnel_stage)
+                    # If we found some stages, use this column
+                    if df_copy['Detected_Funnel_Stage'].nunique() > 1:
+                        funnel_col = 'Detected_Funnel_Stage'
+                        df = df_copy
+                        break
+        
+        # Analyze by funnel stage if detected
+        if funnel_col and funnel_col in df.columns:
+            try:
+                funnel_stages = df.groupby(funnel_col).agg({
+                    'Spend': 'sum' if 'Spend' in df.columns else lambda x: 0,
+                    'Impressions': 'sum' if 'Impressions' in df.columns else lambda x: 0,
+                    'Clicks': 'sum' if 'Clicks' in df.columns else lambda x: 0,
+                    'Conversions': 'sum' if 'Conversions' in df.columns else lambda x: 0,
+                    'ROAS': 'mean' if 'ROAS' in df.columns else lambda x: 0
+                })
+                
+                for stage, row in funnel_stages.iterrows():
+                    if stage != "Unknown":
+                        funnel["by_funnel_stage"][stage] = {
+                            "spend": float(row.get('Spend', 0)),
+                            "impressions": int(row.get('Impressions', 0)),
+                            "clicks": int(row.get('Clicks', 0)),
+                            "conversions": int(row.get('Conversions', 0)),
+                            "roas": float(row.get('ROAS', 0)),
+                            "ctr": (row.get('Clicks', 0) / row.get('Impressions', 1) * 100) if row.get('Impressions', 0) > 0 else 0,
+                            "conversion_rate": (row.get('Conversions', 0) / row.get('Clicks', 1) * 100) if row.get('Clicks', 0) > 0 else 0
+                        }
+            except Exception as e:
+                logger.warning(f"Could not analyze by funnel stage: {e}")
+        
+        # Calculate overall funnel metrics
         if all(col in df.columns for col in ['Impressions', 'Clicks', 'Conversions']):
             total_impressions = df['Impressions'].sum()
             total_clicks = df['Clicks'].sum()

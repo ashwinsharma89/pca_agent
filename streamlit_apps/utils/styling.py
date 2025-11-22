@@ -19,6 +19,27 @@ def apply_custom_css():
         --danger-color: {DANGER_COLOR};
     }}
     
+    /* Remove white background at top */
+    .main {{
+        background-color: #0e1117;
+        padding-top: 0rem;
+    }}
+    
+    .block-container {{
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        background-color: #0e1117;
+    }}
+    
+    /* Streamlit header */
+    header {{
+        background-color: #0e1117 !important;
+    }}
+    
+    .stApp {{
+        background-color: #0e1117;
+    }}
+    
     /* Header styling */
     .main-header {{
         font-size: 3rem;

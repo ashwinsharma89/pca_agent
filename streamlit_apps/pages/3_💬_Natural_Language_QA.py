@@ -27,7 +27,7 @@ load_dotenv()
 
 # Page config
 st.set_page_config(
-    page_title=f"{APP_TITLE} - Natural Language Q&A",
+    page_title=f"{APP_TITLE} - Q&A",
     page_icon="💬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -47,7 +47,7 @@ if 'query_history' not in st.session_state:
 
 # Page header
 render_header(
-    title="💬 Natural Language Q&A",
+    title="💬 Q&A",
     subtitle="Ask questions about your campaign data in plain English - No SQL required!"
 )
 

@@ -62,12 +62,43 @@ with st.sidebar:
     st.markdown("""
     - 📊 **Auto-Insights**: AI-powered analysis
     - 📈 **Visualizations**: Interactive charts
-    - 💬 **Natural Language Q&A**: Ask anything
+    - 💬 **Q&A**: Ask anything about your data
     - 💰 **ROAS Analysis**: Revenue optimization
     - 🎯 **Funnel Analysis**: Conversion optimization
     - 👥 **Audience Insights**: Targeting recommendations
     - 🚀 **Tactical Recommendations**: Actionable steps
     """)
+    
+    st.markdown("---")
+    st.markdown("### 🔗 Quick Navigation")
+    
+    # Styled navigation buttons
+    st.markdown("""
+    <style>
+    .nav-button {
+        display: block;
+        padding: 0.5rem 1rem;
+        margin: 0.5rem 0;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        text-decoration: underline;
+        border-radius: 5px;
+        text-align: center;
+        font-weight: 600;
+    }
+    .nav-button:hover {
+        opacity: 0.8;
+    }
+    </style>
+    
+    <a href="#upload-your-data" class="nav-button">📤 Upload Data</a>
+    <a href="#executive-summary" class="nav-button">📊 Executive Summary</a>
+    <a href="#key-performance-metrics" class="nav-button">📈 Key Metrics</a>
+    <a href="#performance-visualizations" class="nav-button">📊 Visualizations</a>
+    <a href="#ai-generated-insights" class="nav-button">💡 AI Insights</a>
+    <a href="#strategic-recommendations" class="nav-button">🎯 Recommendations</a>
+    """, unsafe_allow_html=True)
+    
     
     st.markdown("---")
     st.markdown("### 📱 Supported Platforms")
@@ -79,7 +110,7 @@ with st.sidebar:
     if st.button("🔄 Reset Analysis", use_container_width=True):
         st.session_state.analysis_complete = False
         st.session_state.analysis_data = None
-        st.session_state.df = None
+        # Don't reset df to preserve data preview
         st.rerun()
 
 # Main tabs
@@ -413,7 +444,62 @@ Black_Friday_2024,google_ads,2024-11-24,2500000,50000,2.0,1800,85000,1.70,47.22,
             if analysis.get('funnel_analysis') and analysis['funnel_analysis'].get('stages'):
                 funnel_data = analysis['funnel_analysis']
                 
-                # Funnel visualization
+                # Show funnel stage performance if detected
+                if funnel_data.get('by_funnel_stage'):
+                    st.markdown("### 🎯 Funnel Stage Performance")
+                    st.info("💡 Funnel stages detected from campaign/placement names")
+                    
+                    funnel_stages_data = funnel_data['by_funnel_stage']
+                    
+                    # Create metrics for each stage
+                    stage_cols = st.columns(len(funnel_stages_data))
+                    for idx, (stage, data) in enumerate(funnel_stages_data.items()):
+                        with stage_cols[idx]:
+                            st.markdown(f"**{stage}**")
+                            st.metric("Spend", f"${data['spend']:,.0f}")
+                            st.metric("ROAS", f"{data['roas']:.2f}x")
+                            st.metric("CTR", f"{data['ctr']:.2f}%")
+                            st.metric("Conv Rate", f"{data['conversion_rate']:.2f}%")
+                    
+                    # Funnel stage comparison chart
+                    st.markdown("---")
+                    funnel_stage_df = pd.DataFrame([
+                        {"Stage": stage, "Spend": data['spend'], "ROAS": data['roas'], 
+                         "Conversions": data['conversions'], "CTR": data['ctr']}
+                        for stage, data in funnel_stages_data.items()
+                    ])
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig = px.bar(
+                            funnel_stage_df,
+                            x='Stage',
+                            y='Spend',
+                            title='Spend by Funnel Stage',
+                            color='ROAS',
+                            color_continuous_scale='RdYlGn'
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        fig = px.bar(
+                            funnel_stage_df,
+                            x='Stage',
+                            y='Conversions',
+                            title='Conversions by Funnel Stage',
+                            color='Stage',
+                            color_discrete_map={
+                                'Awareness': '#667eea',
+                                'Consideration': '#764ba2',
+                                'Conversion': '#f093fb'
+                            }
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.markdown("---")
+                
+                # Overall funnel visualization
+                st.markdown("### 📊 Overall Marketing Funnel")
                 stages = funnel_data['stages']
                 funnel_df = pd.DataFrame({
                     'Stage': ['Awareness', 'Consideration', 'Conversion'],
@@ -470,6 +556,54 @@ Black_Friday_2024,google_ads,2024-11-24,2500000,50000,2.0,1800,85000,1.70,47.22,
                     st.markdown(f"**{insight['insight']}**")
                     st.write(insight['explanation'])
                     st.caption(f"Impact: {insight['impact']}")
+        
+        st.markdown("---")
+        
+        # Opportunities
+        if analysis.get('opportunities'):
+            st.markdown("## 🚀 Opportunities")
+            
+            for i, opp in enumerate(analysis['opportunities'], 1):
+                with st.expander(f"💰 #{i}: {opp.get('type', 'Opportunity')}", expanded=i<=3):
+                    if 'details' in opp:
+                        st.markdown(f"**Details:** {opp['details']}")
+                    if 'why_it_matters' in opp:
+                        st.markdown(f"**Why it matters:** {opp['why_it_matters']}")
+                    if 'recommended_action' in opp:
+                        st.markdown(f"**Recommended action:** {opp['recommended_action']}")
+                    if 'expected_impact' in opp:
+                        st.markdown(f"**Expected impact:** {opp['expected_impact']}")
+                    if 'current_metrics' in opp:
+                        st.caption(f"Current metrics: {opp['current_metrics']}")
+                    if 'campaigns' in opp:
+                        st.markdown(f"**Campaigns to scale:** {', '.join(opp['campaigns'])}")
+                    
+                    # Display other fields if available
+                    for key, value in opp.items():
+                        if key not in ['type', 'details', 'why_it_matters', 'recommended_action', 'expected_impact', 'current_metrics', 'campaigns']:
+                            if isinstance(value, (int, float)):
+                                st.metric(key.replace('_', ' ').title(), f"{value:,.2f}" if isinstance(value, float) else f"{value:,}")
+                            elif isinstance(value, str) and len(value) < 200:
+                                st.caption(f"{key.replace('_', ' ').title()}: {value}")
+        
+        st.markdown("---")
+        
+        # Risks
+        if analysis.get('risks'):
+            st.markdown("## ⚠️ Risks & Red Flags")
+            
+            for i, risk in enumerate(analysis['risks'], 1):
+                severity_emoji = "🔴" if risk.get('severity') == "High" else "🟠" if risk.get('severity') == "Medium" else "🟡"
+                with st.expander(f"{severity_emoji} #{i}: {risk.get('risk', 'Risk')}", expanded=i<=3):
+                    st.markdown(f"**Severity:** {risk.get('severity', 'Unknown')}")
+                    if 'details' in risk:
+                        st.markdown(f"**Details:** {risk['details']}")
+                    if 'impact' in risk:
+                        st.markdown(f"**Impact:** {risk['impact']}")
+                    if 'worst_performers' in risk:
+                        st.markdown(f"**Worst performers:** {risk['worst_performers']}")
+                    if 'action' in risk:
+                        st.markdown(f"**Action required:** {risk['action']}")
         
         st.markdown("---")
         
