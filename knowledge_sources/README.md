@@ -58,6 +58,13 @@ This directory contains organized reference documentation for the PCA Agent's kn
    - Data management
    - Transition strategies
 
+8. **[DATA_DRIVEN_MARKETING.md](DATA_DRIVEN_MARKETING.md)** (18 sources)
+   - Data-driven marketing strategy
+   - Measurement frameworks & benchmarks
+   - Case studies and examples
+   - Nielsen audience measurement
+   - HubSpot & Adobe statistics
+
 ### Channels & Platforms
 
 #### Search Channels

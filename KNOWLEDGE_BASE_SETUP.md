@@ -191,11 +191,32 @@ Learn from public sources:
 
 ### What NOT to Upload ❌
 
-- ❌ Competitor confidential data
-- ❌ Copyrighted material without permission
-- ❌ Personal or sensitive information
-- ❌ Outdated information (always check dates)
-- ❌ Low-quality or unreliable sources
+- See FUNNEL_ANALYTICS_SOURCES.md for funnel-specific content
+- See CHANNEL_SOURCES.md for platform-specific guidance
+- See VISUALIZATION_SOURCES.md for reporting and visualization
+
+## NEW: Semantic Retrieval (RAG)
+
+- **Vector store**: FAISS (L2-normalized inner-product index) located at `data/vector_store/faiss.index`
+- **Metadata**: Stored at `data/vector_store/metadata.json`
+- **Embeddings**: OpenAI `text-embedding-3-small` (update in `VectorStoreConfig` if needed)
+- **Builder**: `VectorStoreBuilder` (see `src/knowledge/vector_store.py`)
+  1. Run `python scripts/auto_ingest_knowledge.py` after new sources are ingested
+  2. The script now persists `data/knowledge_base.json` and rebuilds the FAISS index automatically
+  3. If you need a manual rebuild, import the builder and call `build_from_documents()` with the saved knowledge base
+- **Retriever**: `VectorRetriever` automatically loads inside `EnhancedReasoningEngine`
+  - If the FAISS index is missing, the engine falls back to keyword retrieval and logs a warning
+- **Usage in reasoning**: `_get_external_context()` first queries FAISS, then appends snippets with source/title/URL into the LLM prompt
+- **Troubleshooting**:
+  - Missing files -> rerun ingestion or point `VectorStoreConfig` to the correct paths
+  - OpenAI errors -> ensure `OPENAI_API_KEY` is set and the embedding model is available
+  - Versioning -> delete `data/vector_store/*` before rebuilding if dimensions change
+- **Advanced options**:
+  - `HybridRetriever` blends FAISS vectors with BM25 keyword scores using Reciprocal Rank Fusion (RRF). Adjust weights via `vector_weight`, `keyword_weight`, and `rrf_k` if needed.
+  - Cohere reranking (model `rerank-english-v3.0`) is enabled automatically when `COHERE_API_KEY` is set. Install deps with `pip install rank-bm25 cohere`.
+  - Manual vector rebuilds: run `python scripts/auto_ingest_knowledge.py` or call `VectorStoreBuilder().build_from_documents(json.load(open('data/knowledge_base.json')))`.
+
+This workflow enables true Retrieval-Augmented Generation across the full knowledge base.
 
 ### Tips for Better Results
 

@@ -8,6 +8,7 @@ from anthropic import Anthropic
 import os
 from loguru import logger
 from .knowledge_ingestion import KnowledgeIngestion
+from .vector_store import HybridRetriever, VectorRetriever, VectorStoreConfig
 
 
 class EnhancedReasoningEngine:
@@ -18,7 +19,13 @@ class EnhancedReasoningEngine:
     3. LLM reasoning
     """
     
-    def __init__(self, api_key: Optional[str] = None, use_anthropic: bool = False):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        use_anthropic: bool = False,
+        vector_store_config: Optional[VectorStoreConfig] = None,
+        enable_hybrid: bool = True,
+    ):
         """
         Initialize enhanced reasoning engine.
         
@@ -43,6 +50,32 @@ class EnhancedReasoningEngine:
         
         # Initialize knowledge ingestion
         self.knowledge = KnowledgeIngestion()
+
+        # Attempt to load semantic retriever
+        self.vector_retriever: Optional[VectorRetriever] = None
+        self.hybrid_retriever: Optional[HybridRetriever] = None
+        try:
+            self.vector_retriever = VectorRetriever(
+                config=vector_store_config or VectorStoreConfig()
+            )
+            logger.info("Vector retriever initialized (FAISS + OpenAI embeddings)")
+        except FileNotFoundError:
+            logger.warning(
+                "Vector store not found. Run auto_ingest_knowledge.py to build it before using semantic retrieval."
+            )
+        except Exception as exc:
+            logger.error(f"Failed to initialize vector retriever: {exc}")
+            self.vector_retriever = None
+
+        if enable_hybrid:
+            try:
+                self.hybrid_retriever = HybridRetriever(
+                    config=vector_store_config or VectorStoreConfig()
+                )
+                logger.info("Hybrid retriever initialized (vector + keyword + rerank)")
+            except Exception as exc:
+                logger.error(f"Failed to initialize hybrid retriever: {exc}")
+                self.hybrid_retriever = None
         
         logger.info(f"Initialized EnhancedReasoningEngine with {self.model}")
     
@@ -112,8 +145,9 @@ class EnhancedReasoningEngine:
             context_parts.append(f"## Campaign Data Context:\n{data_context}")
         
         # Add external knowledge if requested
+        external_context = ""
         if use_knowledge:
-            external_context = self.knowledge.get_context_for_query(query, max_chunks=3)
+            external_context = self._get_external_context(query)
             if external_context:
                 context_parts.append(f"## External Knowledge:\n{external_context}")
         
@@ -205,7 +239,7 @@ Be specific, honest about limitations, and cite sources."""
         logger.info(f"Generating knowledge-enhanced insights on: {topic}")
         
         # Get relevant knowledge
-        external_context = self.knowledge.get_context_for_query(topic, max_chunks=5)
+        external_context = self._get_external_context(topic, max_chunks=5)
         
         system_prompt = """You are a senior digital marketing strategist combining:
 1. Real campaign performance data
@@ -299,6 +333,34 @@ Format as JSON array with: category, insight, source (data/knowledge/both), reco
         """Clear all learned knowledge."""
         self.knowledge.clear_knowledge_base()
         logger.info("Knowledge base cleared")
+
+    def _get_external_context(self, query: str, max_chunks: int = 3) -> str:
+        """Fetch supporting knowledge via vector retriever or keyword fallback."""
+
+        snippets: List[str] = []
+
+        retriever = self.hybrid_retriever or self.vector_retriever
+
+        if retriever:
+            try:
+                for result in retriever.search(query, top_k=max_chunks):
+                    meta = result.get('metadata', {})
+                    title = meta.get('title') or meta.get('url') or 'Unknown Source'
+                    url = meta.get('url', 'N/A')
+                    snippet = result.get('text', '')
+                    score = result.get('score', 0)
+                    snippets.append(
+                        f"[Source: {title} | {url}]\nScore: {score:.3f}\n{snippet}"
+                    )
+            except Exception as exc:
+                logger.error(f"Hybrid/vector retrieval failed, falling back to keyword search: {exc}")
+
+        if not snippets:
+            fallback = self.knowledge.get_context_for_query(query, max_chunks=max_chunks)
+            if fallback:
+                snippets.append(fallback)
+
+        return "\n\n---\n\n".join(snippets)
 
 
 # Example usage

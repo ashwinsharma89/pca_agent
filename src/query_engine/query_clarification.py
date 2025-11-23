@@ -8,6 +8,7 @@ import json
 from typing import List, Dict, Any
 import logging
 from ..config.llm_router import LLMRouter, TaskType
+from .sql_knowledge import SQLKnowledgeHelper
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class QueryClarifier:
         # Use Claude Sonnet 4.5 for multi-step agentic reasoning
         self.client, self.model, self.config = LLMRouter.get_client(TaskType.QUERY_INTERPRETATION)
         logger.info(f"QueryClarifier initialized with {self.model} for agentic reasoning")
+        self.sql_helper = SQLKnowledgeHelper(enable_hybrid=True)
     
     def generate_interpretations(
         self, 
@@ -43,10 +45,15 @@ class QueryClarifier:
             - sql_hint: Hint about what SQL would look like
         """
         
+        sql_context = self.sql_helper.build_context(query, schema_info)
+
         prompt = f"""You are a data analyst helping clarify what a user wants to know about their campaign data.
 
 Available Data Schema:
 {json.dumps(schema_info, indent=2)}
+
+SQL Knowledge & Reference:
+{sql_context}
 
 User Query: "{query}"
 

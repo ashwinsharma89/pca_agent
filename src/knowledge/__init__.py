@@ -4,5 +4,6 @@ Enables PCA Agent to learn from URLs, YouTube videos, and PDFs
 """
 from .knowledge_ingestion import KnowledgeIngestion
 from .enhanced_reasoning import EnhancedReasoningEngine
+from .vector_store import VectorStoreBuilder, VectorRetriever
 
-__all__ = ['KnowledgeIngestion', 'EnhancedReasoningEngine']
+__all__ = ['KnowledgeIngestion', 'EnhancedReasoningEngine', 'VectorStoreBuilder', 'VectorRetriever']

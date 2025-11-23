@@ -82,12 +82,76 @@ ANTHROPIC_API_KEY=your_key_here
 uvicorn src.api.main:app --reload --port 8000
 ```
 
-### 4. Run Streamlit Dashboard
+### 4. Run Streamlit Dashboards
 
 ```bash
-# Start demo dashboard
+# Primary PCA workspace (existing dashboards)
 streamlit run streamlit_app.py
+
+# Retrieval monitoring (new)
+streamlit run "streamlit_apps/pages/5_📈_Retrieval_Monitoring.py"
 ```
+
+## Knowledge Base & Advanced RAG
+
+The PCA Agent now ships with an ingestion + retrieval pipeline that powers hybrid RAG across every reasoning surface (EnhancedReasoningEngine, query clarifier, NL-to-SQL, Streamlit UI).
+
+### 1. Prepare sources
+- Curate URLs/YouTube/PDFs in `knowledge_sources/` (see `knowledge_sources/README.md`)
+- Prioritized URL lists live in `knowledge_sources_priority1.txt` (text) and `.json` (structured)
+- Track ingestion outcomes in `SUCCESSFUL_INGESTIONS.md` / `FAILED_INGESTIONS.md`
+
+### 2. Auto-ingest & rebuild vectors
+
+```bash
+python scripts/auto_ingest_knowledge.py --source-file knowledge_sources_priority1.txt
+```
+
+This script:
+1. Fetches all sources, storing normalized chunks + metadata to `data/knowledge_base.json`
+2. Installs embeddings via OpenAI `text-embedding-3-small`
+3. Rebuilds the FAISS index at `data/vector_store/faiss.index`
+4. Persists companion metadata at `data/vector_store/metadata.json`
+
+Manual rebuilds (e.g., after editing `knowledge_base.json`):
+
+```python
+from src.knowledge.vector_store import VectorStoreBuilder
+builder = VectorStoreBuilder()
+docs = json.load(open("data/knowledge_base.json", "r", encoding="utf-8"))
+builder.build_from_documents(docs)
+```
+
+### 3. Dependencies & API keys
+- `pip install rank-bm25 cohere` (keyword retrieval + Cohere rerank)
+- `OPENAI_API_KEY` (embeddings + GPT reasoning)
+- `COHERE_API_KEY` (optional reranking)
+- Optional LLMs: `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`
+
+### 4. Retrieval stack
+- **VectorRetriever**: FAISS + OpenAI embeddings
+- **KeywordRetriever**: BM25 (rank-bm25) over chunk text
+- **HybridRetriever**: Combines both via Reciprocal Rank Fusion (RRF)
+- **CohereReranker**: Optional rerank of merged candidates (`rerank-english-v3.0`)
+- **Metadata filters**: Limit retrieval by `category`, `priority`, etc.
+- **SQLKnowledgeHelper**: Bundles best practices + schema snapshot + retrieved snippets for NL-to-SQL & query clarification
+
+### 5. Monitoring
+- Every retrieval call writes metrics to `data/vector_store/retrieval_metrics.jsonl`
+- Launch `streamlit_apps/pages/5_📈_Retrieval_Monitoring.py` to visualize:
+  - Query volume over time
+  - Vector vs keyword candidate counts
+  - Cohere rerank usage
+  - Filter/category/priority distributions
+  - Raw log for debugging
+
+### 6. Streamlit Q&A context panel
+- On the "💬 Q&A" page, each answer now displays the SQL Knowledge Context (best practices, schema, top retrieved snippets) so analysts can validate reasoning.
+
+### 7. Troubleshooting tips
+- Missing FAISS index → rerun ingestion or delete `data/vector_store/*` and rebuild
+- Cohere errors → confirm `COHERE_API_KEY` and rerank model availability
+- Empty retrieval responses → inspect `FAILED_INGESTIONS.md` and monitoring dashboard filters
 
 ## Usage
 

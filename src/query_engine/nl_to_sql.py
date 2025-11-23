@@ -11,6 +11,8 @@ import os
 from loguru import logger
 import sys
 
+from .sql_knowledge import SQLKnowledgeHelper
+
 # Configure logger to also write to file
 logger.add("query_debug.log", rotation="1 MB", level="INFO")
 
@@ -48,6 +50,7 @@ class NaturalLanguageQueryEngine:
         
         # Setup available models in priority order
         self.available_models = []
+        self.sql_helper = SQLKnowledgeHelper(enable_hybrid=True)
         
         # 1. Gemini 2.5 Flash (FREE & FAST)
         google_key = os.getenv('GOOGLE_API_KEY')
@@ -138,6 +141,7 @@ class NaturalLanguageQueryEngine:
             SQL query string
         """
         schema_description = self._get_schema_description()
+        sql_context = self.sql_helper.build_context(question, self.schema_info)
         
         logger.info(f"=== GENERATING SQL FOR QUESTION: {question} ===")
         logger.info(f"Schema info available: {self.schema_info is not None}")
@@ -150,6 +154,9 @@ class NaturalLanguageQueryEngine:
 
 Database Schema:
 {schema_description}
+
+SQL Knowledge & Reference:
+{sql_context}
 
 🔴 CRITICAL AGGREGATION RULES - NEVER VIOLATE:
 
@@ -544,21 +551,25 @@ SQL Query:"""
         
         Args:
             question: Natural language question
-            
+        
         Returns:
             Dictionary with SQL query, results, and metadata
         """
         import time
-        
+
+        context_package: Optional[Dict[str, Any]] = None
+
         try:
             start_time = time.time()
-            
+
             # 1) Generate SQL with normal provider priority
             sql_query = self.generate_sql(question)
-            
+
             # 2) Execute query
             results = self.execute_query(sql_query)
-            
+
+            context_package = self.sql_helper.get_last_context_package() or {}
+
             # 3) If no rows returned, optionally try a semantic fallback with DeepSeek
             if results.empty and any(m[0] == 'deepseek' for m in self.available_models):
                 logger.warning(
@@ -577,17 +588,18 @@ SQL Query:"""
                             logger.info("DeepSeek fallback produced non-empty results. Using fallback SQL.")
                             sql_query = fallback_sql
                             results = fallback_results
+                            context_package = self.sql_helper.get_last_context_package() or context_package
                 except Exception as fe:
                     logger.warning(f"DeepSeek semantic fallback failed: {fe}")
                 finally:
                     # Restore original provider order for future calls
                     self.available_models = original_models
-            
-            # Generate natural language answer
+
+            # 4) Generate answer
             answer = self._generate_answer(question, results)
-            
+
             execution_time = time.time() - start_time
-            
+
             return {
                 "question": question,
                 "sql_query": sql_query,
@@ -595,10 +607,11 @@ SQL Query:"""
                 "answer": answer,
                 "execution_time": execution_time,
                 "model_used": getattr(self, '_last_model_used', 'unknown'),
+                "sql_context": context_package,
                 "success": True,
                 "error": None
             }
-        
+
         except Exception as e:
             logger.error(f"Error processing question: {e}")
             return {
@@ -606,28 +619,11 @@ SQL Query:"""
                 "sql_query": None,
                 "results": None,
                 "answer": None,
+                "sql_context": context_package if 'context_package' in locals() else self.sql_helper.get_last_context_package(),
                 "success": False,
                 "error": str(e)
             }
-    
-    def _get_schema_description(self) -> str:
-        """Generate a description of the database schema."""
-        if not self.schema_info:
-            return "No schema information available"
-        
-        desc = f"Table: {self.schema_info['table_name']}\n\n"
-        desc += "Columns:\n"
-        
-        for col in self.schema_info['columns']:
-            dtype = str(self.schema_info['dtypes'][col])
-            desc += f"  - {col} ({dtype})\n"
-        
-        desc += "\nSample Data (first 3 rows):\n"
-        for i, row in enumerate(self.schema_info['sample_data'], 1):
-            desc += f"  Row {i}: {row}\n"
-        
-        return desc
-    
+
     def _generate_answer(self, question: str, results: pd.DataFrame) -> str:
         """
         Generate strategic insights and recommendations from query results.
