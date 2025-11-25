@@ -4,11 +4,11 @@ Combines data analysis with external knowledge from URLs, YouTube, PDFs
 """
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
-from anthropic import Anthropic
 import os
 from loguru import logger
 from .knowledge_ingestion import KnowledgeIngestion
 from .vector_store import HybridRetriever, VectorRetriever, VectorStoreConfig
+from ..utils.anthropic_helpers import create_anthropic_client
 
 
 class EnhancedReasoningEngine:
@@ -37,9 +37,9 @@ class EnhancedReasoningEngine:
         
         if use_anthropic:
             anthropic_key = api_key or os.getenv('ANTHROPIC_API_KEY')
-            if not anthropic_key:
-                raise ValueError("ANTHROPIC_API_KEY not found")
-            self.client = Anthropic(api_key=anthropic_key)
+            self.client = create_anthropic_client(anthropic_key)
+            if not self.client:
+                raise ValueError("Failed to initialize Anthropic client. Check ANTHROPIC_API_KEY or SDK support.")
             self.model = os.getenv('DEFAULT_LLM_MODEL', 'claude-3-5-sonnet-20241022')
         else:
             openai_key = api_key or os.getenv('OPENAI_API_KEY')

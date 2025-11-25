@@ -25,6 +25,18 @@ from src.utils.data_loader import normalize_campaign_dataframe
 # Load environment variables
 load_dotenv()
 
+
+def get_api_key(secret_key: str, env_var: str) -> str | None:
+    """Prefer Streamlit secrets but fall back to os.getenv for local runs."""
+    try:
+        api_keys = st.secrets["api_keys"]
+        value = api_keys.get(secret_key)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(env_var)
+
 # Page config
 st.set_page_config(
     page_title=f"{APP_TITLE} - Q&A",
@@ -212,7 +224,7 @@ Q4_Holiday,meta_ads,2024-10-01,32000,620,3.8,51.61,1.89,980000,18500
                         try:
                             from src.query_engine import NaturalLanguageQueryEngine
                             
-                            api_key = os.getenv('OPENAI_API_KEY')
+                            api_key = get_api_key('OPENAI_API_KEY', 'OPENAI_API_KEY')
                             if not api_key or api_key == 'your_openai_api_key_here':
                                 st.error("❌ OpenAI API key not found. Set OPENAI_API_KEY in .env file.")
                                 st.info("💡 Get your key at: https://platform.openai.com/api-keys")

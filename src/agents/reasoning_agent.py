@@ -6,7 +6,6 @@ from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 from openai import AsyncOpenAI
-from anthropic import AsyncAnthropic
 from loguru import logger
 
 from ..models.campaign import (
@@ -18,6 +17,7 @@ from ..models.campaign import (
 )
 from ..models.platform import PlatformType, MetricType, NormalizedMetric, PLATFORM_CONFIGS
 from ..config.settings import settings
+from ..utils.anthropic_helpers import create_async_anthropic_client
 
 
 class ReasoningAgent:
@@ -37,7 +37,9 @@ class ReasoningAgent:
         if provider == "openai":
             self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         elif provider == "anthropic":
-            self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            self.client = create_async_anthropic_client(settings.anthropic_api_key)
+            if not self.client:
+                raise ValueError("Failed to initialize Anthropic async client. Check ANTHROPIC_API_KEY or SDK support.")
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         

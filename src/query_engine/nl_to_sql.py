@@ -6,12 +6,12 @@ import duckdb
 import pandas as pd
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
-from anthropic import Anthropic
 import os
 from loguru import logger
 import sys
 
 from .sql_knowledge import SQLKnowledgeHelper
+from src.utils.anthropic_helpers import create_anthropic_client
 
 # Configure logger to also write to file
 logger.add("query_debug.log", rotation="1 MB", level="INFO")
@@ -77,9 +77,12 @@ class NaturalLanguageQueryEngine:
         # 4. Claude Sonnet 4.5
         anthropic_key = os.getenv('ANTHROPIC_API_KEY')
         if anthropic_key and anthropic_key.startswith('sk-ant-'):
-            self.anthropic_client = Anthropic(api_key=anthropic_key)
-            self.available_models.append(('claude', 'claude-sonnet-4-5-20250929'))
-            logger.info("Tier 4: Claude Sonnet 4.5")
+            self.anthropic_client = create_anthropic_client(anthropic_key)
+            if self.anthropic_client:
+                self.available_models.append(('claude', 'claude-sonnet-4-5-20250929'))
+                logger.info("Tier 4: Claude Sonnet 4.5")
+            else:
+                logger.warning("Anthropic client unavailable. Skipping Claude tier.")
         
         # 5. Groq (ULTIMATE FREE FALLBACK)
         groq_key = os.getenv('GROQ_API_KEY')
@@ -129,7 +132,33 @@ class NaturalLanguageQueryEngine:
         }
         
         logger.info(f"Loaded {len(df_copy)} rows into table '{table_name}'")
-    
+
+    def _get_schema_description(self) -> str:
+        """Return a formatted schema description for prompt injection."""
+        if not self.schema_info:
+            raise ValueError(
+                "Schema information not available. Call load_data() before asking questions."
+            )
+
+        columns = self.schema_info.get("columns", [])
+        dtypes = self.schema_info.get("dtypes", {})
+        sample_rows = self.schema_info.get("sample_data", [])
+        table_name = self.schema_info.get("table_name", "campaigns")
+
+        lines = [f"Table: {table_name}"]
+        if columns:
+            lines.append("Columns:")
+            for col in columns:
+                dtype = dtypes.get(col)
+                lines.append(f"- {col} ({dtype})")
+
+        if sample_rows:
+            lines.append("Sample rows:")
+            for row in sample_rows:
+                lines.append(f"- {row}")
+
+        return "\n".join(lines)
+
     def generate_sql(self, question: str) -> str:
         """
         Convert natural language question to SQL query.

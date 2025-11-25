@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Dict, Any, Tuple, Optional
 import logging
 
+from ..utils.anthropic_helpers import create_anthropic_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -134,8 +136,9 @@ class LLMRouter:
         model = config["model"]
         
         if provider == "anthropic":
-            from anthropic import Anthropic
-            client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+            client = create_anthropic_client(os.getenv('ANTHROPIC_API_KEY'))
+            if not client:
+                raise RuntimeError("Anthropic client unavailable. Remove ANTHROPIC routing or install supported SDK.")
             return client, model, config
             
         elif provider == "openai":

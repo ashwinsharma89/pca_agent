@@ -17,6 +17,18 @@ from src.utils.data_loader import normalize_campaign_dataframe
 # Load environment variables
 load_dotenv()
 
+
+def get_api_key(secret_key: str, env_var: str) -> str | None:
+    """Prefer Streamlit secrets but fall back to environment variables."""
+    try:
+        api_keys = st.secrets["api_keys"]
+        value = api_keys.get(secret_key)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(env_var)
+
 # Page config
 st.set_page_config(
     page_title="PCA Agent - Campaign Analytics",

@@ -10,6 +10,18 @@ import plotly.express as px
 # Load environment
 load_dotenv()
 
+
+def get_api_key(secret_key: str, env_var: str) -> str | None:
+    """Prefer Streamlit secrets but fallback to environment variables."""
+    try:
+        api_keys = st.secrets["api_keys"]
+        value = api_keys.get(secret_key)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(env_var)
+
 # Page config
 st.set_page_config(
     page_title="PCA Agent - Simple Q&A",
@@ -81,7 +93,7 @@ if st.session_state.df is not None:
     
     # Initialize Q&A engine
     if st.session_state.qa_engine is None:
-        api_key = os.getenv('OPENAI_API_KEY')
+        api_key = get_api_key('OPENAI_API_KEY', 'OPENAI_API_KEY')
         if api_key:
             from src.query_engine import NaturalLanguageQueryEngine
             with st.spinner("🤖 Initializing Q&A Engine..."):

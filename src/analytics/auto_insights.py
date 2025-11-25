@@ -4,13 +4,19 @@ Generates insights and recommendations automatically from campaign data
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from openai import OpenAI
-from anthropic import Anthropic
+import google.generativeai as genai
 from loguru import logger
 import json
 import os
+import re
+from dotenv import load_dotenv
 from ..data_processing import MediaDataProcessor
+
+
+# Ensure environment variables from .env are available when this module loads
+load_dotenv()
 
 
 class MediaAnalyticsExpert:
@@ -27,7 +33,7 @@ class MediaAnalyticsExpert:
         'campaign': ['Campaign', 'Campaign_Name', 'Campaign Name', 'Campaign_Name_Full']
     }
     
-    def __init__(self, api_key: str = None, use_anthropic: bool = None):
+    def __init__(self, api_key: Optional[str] = None, use_anthropic: Optional[bool] = None):
         """Initialize the analytics expert."""
         # Determine which LLM to use
         if use_anthropic is None:
@@ -36,21 +42,43 @@ class MediaAnalyticsExpert:
         self.use_anthropic = use_anthropic
         
         if self.use_anthropic:
-            # Use Anthropic Claude
-            anthropic_key = api_key or os.getenv('ANTHROPIC_API_KEY')
-            if not anthropic_key:
-                raise ValueError("ANTHROPIC_API_KEY not found")
-            self.client = Anthropic(api_key=anthropic_key)
-            self.model = os.getenv('DEFAULT_LLM_MODEL', 'claude-3-5-sonnet-20241022')
-            logger.info(f"Initialized with Anthropic Claude: {self.model}")
-        else:
-            # Use OpenAI
+            self.anthropic_api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
+            if self.anthropic_api_key:
+                # Don't use the SDK - we'll call the API directly via HTTP
+                self.client = None  # We'll use requests library instead
+                self.model = (
+                    os.getenv('DEFAULT_ANTHROPIC_MODEL')
+                    or os.getenv('DEFAULT_LLM_MODEL')
+                    or 'claude-3-5-sonnet-20241022'
+                )
+                logger.info(f"✅ Initialized with Anthropic Claude (HTTP API): {self.model}")
+            else:
+                logger.warning("No Anthropic API key found. Falling back to OpenAI.")
+                self.use_anthropic = False
+                self.anthropic_api_key = None
+
+        if not self.use_anthropic:
             openai_key = api_key or os.getenv('OPENAI_API_KEY')
             if not openai_key:
                 raise ValueError("OPENAI_API_KEY not found")
             self.client = OpenAI(api_key=openai_key)
-            self.model = os.getenv('DEFAULT_LLM_MODEL', 'gpt-4')
+            self.model = (
+                os.getenv('DEFAULT_OPENAI_MODEL')
+                or os.getenv('OPENAI_MODEL')
+                or 'gpt-4o-mini'
+            )
             logger.info(f"Initialized with OpenAI: {self.model}")
+        
+        # Initialize Gemini client as a fallback
+        self.gemini_client = None
+        google_key = os.getenv('GOOGLE_API_KEY')
+        if google_key:
+            try:
+                genai.configure(api_key=google_key)
+                self.gemini_client = genai.GenerativeModel('gemini-2.0-flash-exp')
+                logger.info("Gemini 2.0 Flash client initialized successfully for fallback.")
+            except Exception as e:
+                logger.warning(f"Could not initialize Gemini client: {e}")
         
         self.insights = []
         self.recommendations = []
@@ -73,6 +101,124 @@ class MediaAnalyticsExpert:
                 if col_name in df.columns:
                     return col_name
         return None
+
+    @staticmethod
+    def _strip_italics(text: str) -> str:
+        """Comprehensive formatting cleanup with regex to fix common LLM formatting issues.
+        
+        Nuclear approach: Remove all formatting and ensure perfect spacing around numbers.
+        """
+        if not isinstance(text, str):
+            return text
+        
+        # NUCLEAR PASS 1: Remove ALL formatting characters completely
+        text = re.sub(r'\*+', '', text)  # Remove all asterisks
+        text = re.sub(r'_+', '', text)   # Remove all underscores
+        
+        # NUCLEAR PASS 2: Fix ALL number-related spacing (most aggressive)
+        # This will run MULTIPLE times to catch all edge cases
+        
+        for _ in range(3):  # Run 3 times to catch cascading issues
+            # CRITICAL: Fix K/M/B abbreviations FIRST (before general digit-letter fix)
+            # This handles cases like "973K" followed by text
+            text = re.sub(r'(\d)([KMB])([a-z])', r'\1\2 \3', text, flags=re.IGNORECASE)
+            text = re.sub(r'(\d)([KMB])([A-Z])', r'\1\2 \3', text)
+            
+            # Fix digit followed by letter (but preserve K/M/B)
+            text = re.sub(r'(\d)([A-DF-JL-Z])([a-z])', r'\1 \2\3', text)  # Skip K
+            text = re.sub(r'(\d)([a-jl-z])', r'\1 \2', text)  # Lowercase (skip k)
+            
+            # Fix letter followed by digit
+            text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+            
+            # Fix comma-separated numbers followed by letters
+            text = re.sub(r'(\d,\d{3})([A-Za-z])', r'\1 \2', text)
+            
+            # Fix decimal numbers followed by letters
+            text = re.sub(r'(\d\.\d+)([A-Za-z])', r'\1 \2', text)
+            
+            # Fix uppercase abbreviations (CPC, CTR, ROAS, etc.)
+            text = re.sub(r'(\d)([A-Z]{2,})', r'\1 \2', text)
+        
+        # PASS 3: Fix symbols (keep them attached to numbers)
+        text = re.sub(r'([\$€£¥])\s+(\d)', r'\1\2', text)  # $100 not $ 100
+        text = re.sub(r'(\d)\s+(%)', r'\1\2', text)         # 50% not 50 %
+        text = re.sub(r'(\d)\s+(x)', r'\1\2', text)         # 2x not 2 x
+        
+        # PASS 4: Fix punctuation spacing
+        text = re.sub(r'([.,!?:;])([A-Za-z0-9])', r'\1 \2', text)
+        text = re.sub(r',([^\s])', r', \1', text)
+        
+        # PASS 5: Fix parentheses and brackets
+        text = re.sub(r'([A-Za-z0-9])\(', r'\1 (', text)
+        text = re.sub(r'\)([A-Za-z0-9])', r') \1', text)
+        text = re.sub(r'([A-Za-z0-9])\[', r'\1 [', text)
+        text = re.sub(r'\]([A-Za-z0-9])', r'] \1', text)
+        
+        # PASS 6: Fix special cases
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # camelCase
+        
+        # PASS 7: Clean up spacing
+        text = re.sub(r' {2,}', ' ', text)      # Multiple spaces
+        text = re.sub(r'\n{3,}', '\n\n', text)  # Multiple newlines
+        
+        # FINAL NUCLEAR PASS: One more time for numbers
+        for _ in range(2):
+            text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+            text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+            text = re.sub(r' {2,}', ' ', text)
+        
+        # Clean up whitespace per line
+        text = '\n'.join(line.strip() for line in text.split('\n'))
+        
+        return text.strip()
+
+    @staticmethod
+    def _extract_json_array(text: str) -> List[Dict[str, Any]]:
+        """Extract the first JSON array from an LLM response."""
+        if not text:
+            raise ValueError("Empty response")
+
+        cleaned = text.strip()
+        if "```" in cleaned:
+            parts = cleaned.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("[") and part.endswith("]"):
+                    cleaned = part
+                    break
+
+        if not cleaned.startswith("["):
+            start = cleaned.find("[")
+            end = cleaned.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end + 1]
+
+        return json.loads(cleaned)
+
+    @staticmethod
+    def _deduplicate(entries: List[Dict[str, Any]], key_fields: List[str]) -> List[Dict[str, Any]]:
+        """Remove duplicate dict entries using provided key fields."""
+        deduped: List[Dict[str, Any]] = []
+        seen: set[Tuple[Any, ...]] = set()
+
+        for entry in entries:
+            key_parts: List[Any] = []
+            for field in key_fields:
+                value = entry.get(field)
+                if isinstance(value, list):
+                    key_parts.append(tuple(value))
+                else:
+                    key_parts.append(value)
+            key = tuple(key_parts)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(entry)
+
+        return deduped
     
     def analyze_all(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -294,17 +440,30 @@ class MediaAnalyticsExpert:
         """
         try:
             if self.use_anthropic:
-                # Anthropic Claude API
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    system=system_prompt,
-                    messages=[
+                # Anthropic Claude API via HTTP (bypass SDK proxy issues)
+                import requests
+                headers = {
+                    "x-api-key": self.anthropic_api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                }
+                payload = {
+                    "model": self.model,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3,
+                    "system": system_prompt,
+                    "messages": [
                         {"role": "user", "content": user_prompt}
                     ]
+                }
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=60
                 )
-                return response.content[0].text
+                response.raise_for_status()
+                return response.json()["content"][0]["text"]
             else:
                 # OpenAI API
                 response = self.client.chat.completions.create(
@@ -356,7 +515,11 @@ Industry Benchmarks to Consider:
 - CTR: 1.5-3.0% (good), 3.0%+ (excellent)
 - CPA: Varies by industry, but look for consistency and trends
 
-Format as JSON array:
+STRICT OUTPUT RULES:
+- Return VALID JSON array only (no prose before or after the array, no Markdown fences, no italics).
+- Each insight must reference concrete metrics from the data summary.
+
+Format exactly as JSON array:
 [
   {{
     "category": "Funnel|ROAS|Audience|Tactics|Attribution|Platform",
@@ -369,15 +532,9 @@ Format as JSON array:
 Focus on actionable insights that drive business decisions across the entire customer journey."""
 
         try:
-            system_prompt = "You are a world-class media analytics expert. Provide data-driven insights with specific numbers."
+            system_prompt = "You are a world-class media analytics expert. Provide data-driven insights with specific numbers. Return JSON only."
             insights_text = self._call_llm(system_prompt, prompt, max_tokens=2000).strip()
-            # Extract JSON from response
-            if "```json" in insights_text:
-                insights_text = insights_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in insights_text:
-                insights_text = insights_text.split("```")[1].split("```")[0].strip()
-            
-            insights = json.loads(insights_text)
+            insights = self._extract_json_array(insights_text)
             logger.info(f"Generated {len(insights)} insights")
             
         except Exception as e:
@@ -597,12 +754,13 @@ Focus on recommendations that can be implemented immediately with clear tactical
                                 "type": "Underutilized Platform",
                                 "platform": platform,
                                 "current_spend": float(spend),
-                                "current_share": f"{(spend/total_spend)*100:.1f}%",
-                                "opportunity": f"Only {(spend/total_spend)*100:.1f}% of budget but strong KPIs: {', '.join(kpis)}",
-                                "potential_impact": "Increase allocation to improve overall portfolio efficiency"
+                                "kpi_highlights": ", ".join(kpis),
+                                "recommendation": "Shift incremental budget to this platform while monitoring ROAS"
                             })
             except Exception as e:
-                logger.warning(f"Could not calculate platform opportunities: {e}")
+                logger.warning(f"Could not identify underutilized platforms: {e}")
+        
+        opportunities = self._deduplicate(opportunities, ["type", "campaign", "campaigns", "platform", "details"])
         
         # 7. Seasonal/temporal opportunities
         if 'Date' in df.columns:
@@ -756,6 +914,8 @@ Focus on recommendations that can be implemented immediately with clear tactical
                     "action": "Investigate root cause and implement corrective measures"
                 })
         
+        risks = self._deduplicate(risks, ["risk", "details"])
+
         # Limit to top 5 risks
         return risks[:5]
     
@@ -769,8 +929,12 @@ Focus on recommendations that can be implemented immediately with clear tactical
             "expected_improvement": {}
         }
     
-    def _generate_executive_summary(self, metrics: Dict, insights: List, recommendations: List) -> str:
-        """Generate comprehensive executive summary with multi-KPI focus."""
+    def _generate_executive_summary(self, metrics: Dict, insights: List, recommendations: List) -> Dict[str, str]:
+        """Generate both brief and detailed executive summaries.
+        
+        Returns:
+            Dict with 'brief' and 'detailed' keys containing respective summaries
+        """
         
         # Convert to JSON-serializable format
         def make_serializable(obj):
@@ -789,6 +953,33 @@ Focus on recommendations that can be implemented immediately with clear tactical
         
         overview = make_serializable(metrics.get('overview', {}))
         
+        platform_metrics = metrics.get('by_platform', {})
+        campaign_metrics = metrics.get('by_campaign', {})
+
+        def _get_best_metric(metric_key: str, source: Dict[str, Dict[str, Any]], prefer_max: bool = True):
+            best_name = None
+            best_stats = None
+            comparator = max if prefer_max else min
+            filtered = {
+                name: data for name, data in source.items()
+                if isinstance(data, dict) and metric_key in data and data[metric_key] is not None
+            }
+            if not filtered:
+                return None
+            best_name = comparator(filtered, key=lambda k: filtered[k][metric_key])
+            best_stats = filtered[best_name]
+            return {
+                "name": best_name,
+                metric_key: float(best_stats[metric_key]),
+                "spend": float(best_stats.get('Spend') or best_stats.get('Cost') or 0),
+                "conversions": float(best_stats.get('Conversions') or best_stats.get('Site Visit') or best_stats.get('Site_Visit') or 0)
+            }
+
+        top_platform_roas = _get_best_metric('ROAS', platform_metrics, prefer_max=True)
+        bottom_platform_roas = _get_best_metric('ROAS', platform_metrics, prefer_max=False)
+        top_campaign_roas = _get_best_metric('ROAS', campaign_metrics, prefer_max=True)
+        top_campaign_ctr = _get_best_metric('CTR', campaign_metrics, prefer_max=True)
+
         # Build comprehensive KPI summary
         summary_data = {
             "total_spend": overview.get('total_spend', 0),
@@ -805,47 +996,162 @@ Focus on recommendations that can be implemented immediately with clear tactical
                 "avg_conversion_rate": overview.get('avg_conversion_rate', 0) if 'avg_conversion_rate' in overview else None
             },
             "top_insights": insights[:3] if insights else [],
-            "top_recommendations": recommendations[:3] if recommendations else []
+            "top_recommendations": recommendations[:3] if recommendations else [],
+            "leaders": {
+                "platform_roas": top_platform_roas,
+                "campaign_roas": top_campaign_roas,
+                "campaign_ctr": top_campaign_ctr
+            },
+            "laggards": {
+                "platform_roas": bottom_platform_roas
+            }
         }
         
-        prompt = f"""Create a concise executive summary (4 complete paragraphs) for a CMO based on this comprehensive campaign analysis:
+        brief_prompt = f"""Create a BRIEF executive summary (3-4 bullet points) for a CMO based on this campaign analysis:
 
 Data:
 {json.dumps(summary_data, indent=2)}
 
-IMPORTANT INSTRUCTIONS:
-1. Write EXACTLY 4 complete, well-structured paragraphs:
-   - Paragraph 1: Overall campaign performance overview with key numbers (spend, conversions, platforms)
-   - Paragraph 2: Multi-KPI analysis - discuss CTR, CPC, CPA, Conversion Rate, and ROAS performance with specific metrics
-   - Paragraph 3: Key wins and challenges - what's working well and what needs improvement
-   - Paragraph 4: Top 2-3 strategic recommendations with expected business impact
+INSTRUCTIONS:
+- Write EXACTLY 3-4 bullet points
+- Each bullet MUST be ONE crisp, impactful sentence (max 25 words)
+- Include specific numbers (spend, ROAS, CTR, conversions)
+- Focus on: overall performance, key win/challenge, top priority action
+- Use bullet points (•) format
+- Be concise and data-driven
 
-2. Each paragraph must be:
-   - Complete sentences (no fragments)
-   - 3-5 sentences long
-   - Include specific numbers and percentages
-   - Professional, executive-friendly language
+Example:
+• Portfolio delivered $X revenue from $Y spend across Z platforms with A.Bx ROAS
+• [Platform] outperformed by C% with D% lower CPA
+• [Issue] causing $X revenue loss - immediate action required
+• Reallocate $X to [Channel] for Y% ROAS improvement"""
 
-3. Analyze performance across MULTIPLE KPIs:
-   - CTR (Click-Through Rate) - measures ad engagement
-   - CPC (Cost Per Click) - measures click efficiency  
-   - CPA (Cost Per Acquisition) - measures conversion cost
-   - Conversion Rate - measures funnel efficiency
-   - ROAS (Return on Ad Spend) - measures revenue efficiency
+        detailed_prompt = f"""Create a DETAILED executive summary with sub-headers for a CMO based on this campaign analysis:
 
-4. Identify patterns:
-   - High CTR but low conversion rate = landing page issue
-   - Low CPC with high conversion rate = efficient targeting
-   - High impressions but low CTR = creative fatigue
+Data:
+{json.dumps(summary_data, indent=2)}
 
-Write in clear, complete paragraphs. Do NOT use bullet points or incomplete sentences."""
+STRUCTURE (MANDATORY):
+Write 5-6 sections, each with a sub-header (###) followed by 2-3 crisp sentences:
 
-        try:
-            system_prompt = "You are a strategic marketing consultant writing for C-level executives. Focus on multi-KPI analysis, not just ROAS."
-            summary = self._call_llm(system_prompt, prompt, max_tokens=600).strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating summary: {e}")
+### 📊 Performance Overview
+[2-3 sentences: Total spend, conversions, platforms, overall ROAS with specific numbers]
+
+### 📈 Multi-KPI Analysis
+[2-3 sentences: CTR, CPC, CPA, Conversion Rate performance with benchmarks and trends]
+
+### ✅ What's Working
+[2-3 sentences: Top performers, successful strategies, positive trends with specific metrics]
+
+### ⚠️ What's Not Working
+[2-3 sentences: Underperformers, challenges, areas of concern with impact quantification]
+
+### 🎯 Priority Actions
+[2-3 sentences: Top 3 specific recommendations with expected impact and timeline]
+
+### 💰 Budget Optimization
+[2-3 sentences: Reallocation suggestions with expected ROI improvement]
+
+FORMATTING RULES (CRITICAL - MUST FOLLOW EXACTLY):
+- Start each section with ### [Emoji] [Title]
+- Each sentence must be crisp (max 30 words)
+- Include specific numbers and percentages
+
+CRITICAL SPACING RULES - READ CAREFULLY:
+
+Rule 1: ALWAYS put a space after ANY number before ANY letter
+✓ CORRECT: "15 campaigns", "973K revenue", "0.60 CPC", "79,492 budget"
+✗ WRONG: "15campaigns", "973Krevenue", "0.60CPC", "79,492budget"
+
+Rule 2: ALWAYS put a space before ANY number after ANY letter
+✓ CORRECT: "from 364K", "approximately 1 million", "generated 8,560 conversions"
+✗ WRONG: "from364K", "approximately1million", "generated8,560conversions"
+
+Rule 3: ALWAYS put a space after punctuation
+✓ CORRECT: "ROAS. The campaign", "competitive, though the"
+✗ WRONG: "ROAS.The campaign", "competitive,though the"
+
+Rule 4: ALWAYS put a space before opening parentheses
+✓ CORRECT: "budget (approximately", "campaigns (15 total)"
+✗ WRONG: "budget(approximately", "campaigns(15 total)"
+
+Rule 5: NO formatting characters - write in PLAIN TEXT ONLY
+✓ CORRECT: "The 0.60 CPC is competitive"
+✗ WRONG: "The **0.60 CPC** is competitive" or "The 0.60CPC**is**competitive"
+
+FORMATTING REQUIREMENTS:
+- NO asterisks (*)
+- NO underscores (_)
+- NO bold or italics
+- NO bullet points in detailed summary
+- Write complete sentences in plain text
+- Each section starts with ### [Emoji] [Title]
+
+BEFORE SUBMITTING YOUR RESPONSE:
+1. Check EVERY number has a space after it
+2. Check EVERY number has a space before it
+3. Remove ALL asterisks and underscores
+4. Verify punctuation has spaces after it"""
+
+        # Try LLMs in order: Claude Sonnet → Gemini 2.5 Pro → GPT-4o-mini
+        brief_summary = None
+        detailed_summary = None
+        system_prompt = "You are a strategic marketing consultant writing for C-level executives. Focus on multi-KPI analysis, not just ROAS. Write clear, professional, well-structured content."
+        
+        # 1. Try Claude Sonnet (primary)
+        if self.use_anthropic and self.anthropic_api_key:
+            try:
+                logger.info("Attempting brief executive summary with Claude Sonnet")
+                brief_summary = self._call_llm(system_prompt, brief_prompt, max_tokens=800)
+                logger.info(f"✅ Brief summary generated with Claude Sonnet ({len(brief_summary)} chars)")
+                
+                logger.info("Attempting detailed executive summary with Claude Sonnet")
+                detailed_summary = self._call_llm(system_prompt, detailed_prompt, max_tokens=2000)
+                logger.info(f"✅ Detailed summary generated with Claude Sonnet ({len(detailed_summary)} chars)")
+            except Exception as e:
+                logger.warning(f"❌ Claude Sonnet failed: {e}")
+        
+        # 2. Try Gemini 2.5 Pro (fallback 1)
+        if (not brief_summary or not detailed_summary) and self.gemini_client:
+            try:
+                if not brief_summary:
+                    logger.info("Attempting brief executive summary with Gemini 2.5 Pro")
+                    full_prompt = f"{system_prompt}\n\n{brief_prompt}"
+                    response = self.gemini_client.generate_content(full_prompt)
+                    brief_summary = response.text
+                    logger.info(f"✅ Brief summary generated with Gemini 2.5 Pro ({len(brief_summary)} chars)")
+                
+                if not detailed_summary:
+                    logger.info("Attempting detailed executive summary with Gemini 2.5 Pro")
+                    full_prompt = f"{system_prompt}\n\n{detailed_prompt}"
+                    response = self.gemini_client.generate_content(full_prompt)
+                    detailed_summary = response.text
+                    logger.info(f"✅ Detailed summary generated with Gemini 2.5 Pro ({len(detailed_summary)} chars)")
+            except Exception as e:
+                logger.warning(f"❌ Gemini 2.5 Pro failed: {e}")
+        
+        # 3. Try GPT-4o-mini (fallback 2)
+        if (not brief_summary or not detailed_summary) and not self.use_anthropic and self.client:
+            try:
+                if not brief_summary:
+                    logger.info("Attempting brief executive summary with GPT-4o-mini")
+                    brief_summary = self._call_llm(system_prompt, brief_prompt, max_tokens=800)
+                    logger.info(f"✅ Brief summary generated with GPT-4o-mini ({len(brief_summary)} chars)")
+                
+                if not detailed_summary:
+                    logger.info("Attempting detailed executive summary with GPT-4o-mini")
+                    detailed_summary = self._call_llm(system_prompt, detailed_prompt, max_tokens=2000)
+                    logger.info(f"✅ Detailed summary generated with GPT-4o-mini ({len(detailed_summary)} chars)")
+            except Exception as e:
+                logger.warning(f"❌ GPT-4o-mini failed: {e}")
+        
+        if brief_summary:
+            brief_summary = self._strip_italics(brief_summary.strip())
+        if detailed_summary:
+            detailed_summary = self._strip_italics(detailed_summary.strip())
+        
+        if not brief_summary or not detailed_summary:
+            logger.error("⚠️ All LLM clients failed for executive summary - using fallback")
             # Enhanced fallback summary
             kpi_summary = []
             if overview.get('avg_roas', 0) > 0:
@@ -856,9 +1162,18 @@ Write in clear, complete paragraphs. Do NOT use bullet points or incomplete sent
                 kpi_summary.append(f"CPA ${overview['avg_cpa']:.2f}")
             
             kpi_text = ", ".join(kpi_summary) if kpi_summary else "multiple KPIs"
-            summary = f"Campaign portfolio analysis complete. {summary_data['campaigns']} campaigns analyzed across {summary_data['platforms']} platforms with total spend of ${summary_data['total_spend']:,.0f}. Key metrics: {kpi_text}. {summary_data['total_conversions']:,.0f} total conversions generated from {summary_data['total_clicks']:,.0f} clicks."
+            fallback_text = f"Campaign portfolio analysis complete. {summary_data['campaigns']} campaigns analyzed across {summary_data['platforms']} platforms with total spend of ${summary_data['total_spend']:,.0f}. Key metrics: {kpi_text}. {summary_data['total_conversions']:,.0f} total conversions generated from {summary_data['total_clicks']:,.0f} clicks."
+            
+            if not brief_summary:
+                brief_summary = f"• {fallback_text}"
+            if not detailed_summary:
+                detailed_summary = fallback_text
         
-        return summary
+        return {
+            "brief": brief_summary,
+            "detailed": detailed_summary
+        }
+    
     
     def _prepare_data_summary(self, df: pd.DataFrame, metrics: Dict) -> str:
         """Prepare comprehensive data summary for AI prompts with multi-KPI focus."""

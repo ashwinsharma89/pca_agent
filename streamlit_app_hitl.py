@@ -23,9 +23,12 @@ import streamlit as st
 
 # Then your imports...
 import time
+import re
+import html
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List, Any
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 # REMOVE this duplicate streamlit import (line 25):
@@ -42,6 +45,18 @@ from src.utils.data_loader import DataLoader, normalize_campaign_dataframe
 #from src.orchestration.query_orchestrator import QueryOrchestrator
 
 load_dotenv()
+
+
+def get_api_key(secret_key: str, env_var: str) -> Optional[str]:
+    """Return API key from Streamlit secrets, falling back to environment vars."""
+    try:
+        api_keys = st.secrets["api_keys"]
+        value = api_keys.get(secret_key)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(env_var)
 
 CACHE_DIR = ".pca_cache"
 LAST_CSV_PATH = os.path.join(CACHE_DIR, "last_campaign_data.csv")
@@ -185,17 +200,49 @@ st.markdown(
         color: #e2e8f0;
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
         transition: all 0.3s ease;
+        max-height: 260px;
+        overflow-y: auto;
+        scrollbar-width: thin;
     }
     
     .insight-card:hover {
-        transform: translateX(4px);
+        transform: translateY(-2px);
         border-left-color: #8b5cf6;
-        box-shadow: 0 8px 32px rgba(59, 130, 246, 0.2);
+    }
+
+    .exec-summary {
+        font-size: 1rem;
+        line-height: 1.6;
+        color: #e2e8f0;
+        margin-bottom: 0;
+        white-space: pre-wrap;
     }
     
-    .section-divider {
-        margin: 3rem 0 2rem 0;
-        height: 1px;
+    .quick-nav-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    
+    .quick-nav-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        background: rgba(59, 130, 246, 0.12);
+        color: #e2e8f0;
+        font-weight: 600;
+        text-decoration: none;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        transition: all 0.2s ease;
+    }
+    
+    .quick-nav-button:hover {
+        background: rgba(59, 130, 246, 0.25);
+        border-color: rgba(59, 130, 246, 0.6);
+        color: #fff;
         background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.3) 50%, transparent 100%);
     }
     
@@ -477,6 +524,168 @@ def _get_column(df: pd.DataFrame, metric: str) -> Optional[str]:
     return None
 
 
+def _strip_light_markup(text: str) -> str:
+    """Remove italics/underline markers from LLM output while preserving bold."""
+    if not isinstance(text, str):
+        return text
+    text = text.replace('&nbsp;', ' ').replace('\xa0', ' ')
+    text = text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+    text = re.sub(r'<(i|em)>(.*?)</\1>', lambda m: f"**{m.group(2).strip()}**", text, flags=re.DOTALL)
+    text = re.sub(r'</?(i|em)>', '', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    def _bold_repl(match: re.Match) -> str:
+        inner = match.group(1).strip()
+        return f"**{inner}**" if inner else ""
+
+    text = re.sub(r'\*\*(.+?)\*\*', _bold_repl, text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', _bold_repl, text, flags=re.DOTALL)
+    text = re.sub(r'__(.+?)__', _bold_repl, text, flags=re.DOTALL)
+    text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', _bold_repl, text, flags=re.DOTALL)
+    
+    # Fix common concatenated word patterns (dictionary-based)
+    common_fixes = {
+        'isconcerning': 'is concerning',
+        'isnotably': 'is notably',
+        'asit': 'as it',
+        'wheretheCPA': 'where the CPA',
+        'fromGoogleAds': 'from Google Ads',
+        'toMetaAds': 'to Meta Ads',
+        'tooptimize': 'to optimize',
+        'whichcould': 'which could',
+        'couldpotentially': 'could potentially',
+        'andgenerate': 'and generate',
+        'anadditional': 'an additional',
+        'theoverall': 'the overall',
+        'especiallyfor': 'especially for',
+        'GoogleAds': 'Google Ads',
+        'MetaAds': 'Meta Ads',
+    }
+    for wrong, correct in common_fixes.items():
+        text = text.replace(wrong, correct)
+    
+    # Fix missing spaces between words using regex
+    # Add space after punctuation if followed by letter
+    text = re.sub(r'([.,;:!?])([a-zA-Z])', r'\1 \2', text)
+    # Add space between digit and letter
+    text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+    # Add space between lowercase and uppercase (camelCase) - critical for "withMeta" -> "with Meta"
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+    # Add space between letter and digit
+    text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+    # Add space between uppercase and lowercase when followed by uppercase (e.g., "CPAat" -> "CPA at")
+    text = re.sub(r'([A-Z]{2,})([a-z])', r'\1 \2', text)
+    
+    return text
+
+
+def _build_key_highlights(analysis: Dict[str, Any]) -> List[str]:
+    """Generate deterministic key highlights from analysis payload."""
+    highlights: List[str] = []
+    metrics = analysis.get("metrics") or {}
+    overview = metrics.get("overview") or {}
+    by_platform = metrics.get("by_platform") or {}
+    by_campaign = metrics.get("by_campaign") or {}
+
+    total_spend = overview.get("total_spend")
+    total_conv = overview.get("total_conversions")
+    total_campaigns = overview.get("total_campaigns")
+    total_platforms = overview.get("total_platforms")
+    total_impr = overview.get("total_impressions")
+    total_clicks = overview.get("total_clicks")
+
+    if total_spend is not None:
+        highlights.append(
+            f"${total_spend:,.0f} in media spend delivered {total_conv:,.0f} conversions across {total_campaigns} campaigns on {total_platforms} platforms."
+        )
+    if overview:
+        kpi_bits = []
+        if overview.get("avg_roas"):
+            kpi_bits.append(f"ROAS {overview['avg_roas']:.2f}x")
+        if overview.get("avg_ctr"):
+            kpi_bits.append(f"CTR {overview['avg_ctr']:.2f}%")
+        if overview.get("avg_cpa"):
+            kpi_bits.append(f"CPA ${overview['avg_cpa']:.2f}")
+        if overview.get("avg_conversion_rate"):
+            kpi_bits.append(f"Conv Rate {overview['avg_conversion_rate']:.2f}%")
+        if kpi_bits:
+            highlights.append("Key efficiency KPIs: " + ", ".join(kpi_bits))
+
+    if by_platform:
+        best_platform = max(
+            by_platform.items(),
+            key=lambda item: item[1].get('ROAS', 0),
+        )
+        platform_name, stats = best_platform
+        highlights.append(
+            f"{platform_name} leads with ROAS {stats.get('ROAS', 0):.2f}x and CTR {stats.get('CTR', 0):.2f}%."
+        )
+
+    if by_campaign:
+        best_campaign = max(
+            by_campaign.items(),
+            key=lambda item: item[1].get('ROAS', 0),
+        )
+        camp_name, stats = best_campaign
+        highlights.append(
+            f"Top campaign '{camp_name}' is driving ROAS {stats.get('ROAS', 0):.2f}x on ${stats.get('Spend', 0):,.0f} spend."
+        )
+
+    insights = analysis.get("insights") or []
+    for insight in insights[:1]:
+        insight_text = insight.get("insight")
+        if insight_text:
+            highlights.append(insight_text)
+
+    # Keep first four unique highlights
+    deduped = []
+    for point in highlights:
+        if point and point not in deduped:
+            deduped.append(point)
+        if len(deduped) == 4:
+            break
+    return deduped
+
+
+def _infer_monthly_agg(column_name: str) -> str:
+    """Heuristically determine aggregation for monthly metrics."""
+    lowered = column_name.lower()
+    if any(keyword in lowered for keyword in ["rate", "roas", "ctr", "cpa", "cpc", "avg", "average"]):
+        return "mean"
+    return "sum"
+
+
+def _resolve_dimension_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Resolve dimension column with case-insensitive matching."""
+    # First try exact match
+    for col in candidates:
+        if col in df.columns:
+            return col
+    
+    # Then try case-insensitive match
+    df_cols_lower = {col.lower(): col for col in df.columns}
+    for candidate in candidates:
+        if candidate.lower() in df_cols_lower:
+            return df_cols_lower[candidate.lower()]
+    
+    return None
+
+
+MONTHLY_DIMENSION_CANDIDATES = [
+    ("Platform", ["Platform"]),
+    ("Age", ["Age", "Age_Group", "Age_Bucket", "Age_Range"]),
+    ("Funnel", ["Funnel_Stage", "Funnel", "Stage", "Campaign_Type"]),
+    ("Placement", ["Placement", "Inventory_Type"]),
+    ("Creative", ["Creative", "Creative_Type", "Ad_Name"]),
+    ("Ad Type", ["Ad_Type", "Format", "Ad_Format"]),
+    ("Audience", ["Audience", "Audience_Type", "Segment"]),
+    ("Region", ["Region", "Geo", "Country", "Location"]),
+]
+
+
+def _get_funnel_column(df: pd.DataFrame) -> Optional[str]:
+    return _resolve_dimension_column(df, ["Funnel_Stage", "Funnel", "Stage", "Campaign_Type"])
+
+
 def validate_campaign_dataframe(df: pd.DataFrame) -> Dict[str, list]:
     """Validate essential columns and data quality for enterprise ingestion."""
     report = {
@@ -566,15 +775,10 @@ with st.sidebar:
         - 📊 Auto-insights dashboard
         - 💡 Executive summaries & metrics
         - 📈 Performance analytics & visualizations
-        - 💬 Natural language Q&A
+        - 💬 Q&A
         - 📜 Query history & tracking
         """
     )
-
-    st.markdown("---")
-    st.markdown("### 📱 Supported Platforms")
-    for platform in ["Google Ads", "Meta Ads", "LinkedIn", "DV360", "CM360", "Snapchat"]:
-        st.markdown(f"✓ {platform}")
 
     st.markdown("---")
     if st.button("🔄 Reset Workspace", use_container_width=True):
@@ -632,20 +836,22 @@ tab_auto, tab_qa, tab_history, tab_metrics = st.tabs(
 # Auto Analysis Tab (restored UI)
 # ---------------------------------------------------------------------------
 with tab_auto:
-    if not st.session_state.analysis_complete:
-        st.markdown("## 📤 Upload Your Campaign Data")
-        col_upload, col_tip = st.columns([2, 1])
-        with col_upload:
-            input_method = st.radio(
-                "Choose Input Method",
-                options=["📊 CSV Data", "📸 Dashboard Screenshots"],
-                horizontal=True,
-            )
-        with col_tip:
-            st.info("💡 CSV upload gives instant results.")
+    # Always show upload section (even after analysis is complete)
+    st.markdown("## 📤 Upload Your Campaign Data")
+    col_upload, col_tip = st.columns([2, 1])
+    with col_upload:
+        input_method = st.radio(
+            "Choose Input Method",
+            options=["📊 CSV Data", "📸 Dashboard Screenshots"],
+            horizontal=True,
+        )
+    with col_tip:
+        pass  # Removed tip
 
-        st.markdown("---")
+    st.markdown("---")
 
+    # Show upload interface regardless of analysis state
+    if True:  # Always show upload section
         if input_method == "📊 CSV Data":
             uploaded_file = st.file_uploader(
                 "Upload your campaign data (CSV or Excel)",
@@ -799,10 +1005,14 @@ with tab_auto:
                     for i, img in enumerate(uploaded_images):
                         cols[i % 3].image(img, caption=img.name, use_column_width=True)
 
-    else:
+    # Show analysis results if available (below upload section)
+    if st.session_state.analysis_complete:
         analysis = st.session_state.analysis_data
         df = st.session_state.df
 
+        st.markdown("---")
+        st.markdown("## 📊 Analysis Results")
+        
         # Show data preview at the top after analysis
         with st.expander("📋 Loaded Data Preview", expanded=False):
             st.dataframe(df.head(20), use_container_width=True)
@@ -825,69 +1035,89 @@ with tab_auto:
 
         # Quick Navigation
         st.markdown("## 🎯 Quick Navigation")
-        nav_cols = st.columns(6)
-        if nav_cols[0].button("📊 Summary", use_container_width=True):
-            st.markdown('<a href="#executive-summary"></a>', unsafe_allow_html=True)
-        if nav_cols[1].button("📈 Metrics", use_container_width=True):
-            st.markdown('<a href="#key-performance-metrics"></a>', unsafe_allow_html=True)
-        if nav_cols[2].button("💡 Opportunities", use_container_width=True):
-            st.markdown('<a href="#opportunities-risks"></a>', unsafe_allow_html=True)
-        if nav_cols[3].button("📊 Analytics", use_container_width=True):
-            st.markdown('<a href="#performance-analytics"></a>', unsafe_allow_html=True)
-        if nav_cols[4].button("🧭 Overview", use_container_width=True):
-            st.markdown('<a href="#management-overview"></a>', unsafe_allow_html=True)
-        if nav_cols[5].button("🔁 Re-run", use_container_width=True):
-            st.session_state.analysis_complete = False
-            st.session_state.analysis_data = None
-            st.session_state.df = None
-            st.rerun()
-        
-        # Add "Load New Data" button
-        st.markdown("")
-        if st.button("📤 Load New Data", type="secondary", use_container_width=False):
-            st.session_state.analysis_complete = False
-            st.session_state.analysis_data = None
-            st.session_state.df = None
-            st.rerun()
+        nav_buttons = [
+            ("📈 Metrics", "#key-performance-metrics"),
+            ("💡 Opportunities", "#opportunities-risks"),
+            ("📊 Analytics", "#performance-analytics"),
+            ("🧭 Overview", "#overview"),
+        ]
+
+        quick_nav_html = "<div class='quick-nav-grid'>" + "".join(
+            f"<a class='quick-nav-button' href='{href}'>{label}</a>" for label, href in nav_buttons
+        ) + "</div>"
+        st.markdown(quick_nav_html, unsafe_allow_html=True)
+
+        # Removed action buttons as per user request
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
         
         st.markdown("<div id='executive-summary'></div>", unsafe_allow_html=True)
         st.markdown("## 📊 Executive Summary")
         
-        # Parse executive summary into brief points
-        exec_summary = analysis["executive_summary"]
+        exec_summary_raw = analysis.get("executive_summary")
         
-        # Create brief summary (first 100 words)
-        words = exec_summary.split()
-        brief_summary = ' '.join(words[:100])
-        if len(words) > 100:
-            brief_summary += "..."
-        
-        # Show brief summary with expander for full version
-        st.markdown(f"**Key Highlights:**")
-        # Extract key points (sentences with numbers or keywords)
-        sentences = exec_summary.split('.')
-        key_points = []
-        for sent in sentences[:5]:  # First 5 sentences
-            sent = sent.strip()
-            if sent and (any(char.isdigit() for char in sent) or any(kw in sent.lower() for kw in ['roas', 'ctr', 'cpa', 'conversion', 'spend', 'campaign'])):
-                key_points.append(f"• {sent}")
-        
-        if key_points:
-            for point in key_points[:4]:  # Max 4 points
-                st.markdown(point)
+        # Handle both dict (new format) and string (old format) for backward compatibility
+        if isinstance(exec_summary_raw, dict):
+            brief_summary = _strip_light_markup(exec_summary_raw.get("brief", "")) if exec_summary_raw.get("brief") else None
+            detailed_summary = _strip_light_markup(exec_summary_raw.get("detailed", "")) if exec_summary_raw.get("detailed") else None
         else:
-            st.markdown(brief_summary)
+            # Old format - treat as detailed summary
+            brief_summary = None
+            detailed_summary = _strip_light_markup(exec_summary_raw) if exec_summary_raw else None
         
-        with st.expander("📄 View Full Executive Summary"):
-            st.write(exec_summary)
+        # Debug logging
+        if brief_summary or detailed_summary:
+            logger.info(f"📊 Displaying executive summary (brief: {len(brief_summary) if brief_summary else 0} chars, detailed: {len(detailed_summary) if detailed_summary else 0} chars)")
+        else:
+            logger.warning("⚠️ No executive summary found in analysis results")
+        
+        # Show brief summary
+        if brief_summary:
+            st.markdown(brief_summary)
+        else:
+            # Fallback to highlights if LLM failed
+            st.warning("⚠️ Executive summary generation failed. Showing key highlights instead:")
+            highlights = _build_key_highlights(analysis)
+            if highlights:
+                for point in highlights:
+                    st.markdown(f"• {point}")
+            else:
+                st.error("Unable to generate executive summary or highlights. Check API keys and try again.")
+        
+        # Show detailed summary in an expander
+        if detailed_summary:
+            with st.expander("📄 View Detailed Executive Summary", expanded=False):
+                st.markdown(detailed_summary)
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div id='management-overview'></div>", unsafe_allow_html=True)
-        st.markdown("## 🧭 Management Overview")
-        filter_cols = st.columns(3)
+        st.markdown("<div id='overview'></div>", unsafe_allow_html=True)
+        st.markdown("## 🧭 Overview")
+        
+        # Dynamic dimension detection
+        dimension_columns = []
+        possible_dimensions = [
+            ('Campaign_Name', 'Campaign'),
+            ('Platform', 'Platform'),
+            ('Placement', 'Placement'),
+            ('Funnel_Stage', 'Funnel'),
+            ('Audience', 'Audience'),
+            ('Ad_Type', 'Ad Type'),
+            ('Region', 'Region'),
+            ('Age_Group', 'Age'),
+            ('Device', 'Device'),
+            ('Gender', 'Gender')
+        ]
+        
+        for col_name, display_name in possible_dimensions:
+            if col_name in df.columns:
+                dimension_columns.append((col_name, display_name))
+        
+        # Create filter columns dynamically
+        num_filters = min(len(dimension_columns) + 1, 6)  # +1 for date, max 6
+        filter_cols = st.columns(num_filters)
+        
+        # Campaign filter
         campaign_options = ["All Campaigns"] + (
             sorted(df["Campaign_Name"].dropna().unique().tolist())
             if "Campaign_Name" in df.columns
@@ -897,34 +1127,42 @@ with tab_auto:
             "Campaign",
             options=campaign_options,
         )
-        platform_options = (
-            sorted(df["Platform"].dropna().unique().tolist())
-            if "Platform" in df.columns
-            else []
-        )
-        selected_platforms = filter_cols[1].multiselect(
-            "Platforms",
-            options=platform_options,
-            default=platform_options,
-        )
+        
+        # Dynamic dimension filters
+        selected_filters = {}
+        filter_idx = 1
+        for col_name, display_name in dimension_columns[1:num_filters-1]:  # Skip Campaign (already added)
+            options = sorted(df[col_name].dropna().unique().tolist())
+            selected = filter_cols[filter_idx].multiselect(
+                display_name,
+                options=options,
+                default=options,
+            )
+            selected_filters[col_name] = selected
+            filter_idx += 1
+        # Date filter (last column)
         date_range = None
-        if "Date" in df.columns:
+        if "Date" in df.columns and filter_idx < num_filters:
             try:
                 df_dates = pd.to_datetime(df["Date"], errors="coerce")
                 min_date, max_date = df_dates.min(), df_dates.max()
                 if pd.notna(min_date) and pd.notna(max_date):
-                    date_range = filter_cols[2].date_input(
+                    date_range = filter_cols[filter_idx].date_input(
                         "Date Range",
                         value=(min_date.date(), max_date.date()),
                     )
             except Exception:
                 date_range = None
 
+        # Apply filters
         df_mgmt = df.copy()
         if selected_campaign != "All Campaigns" and "Campaign_Name" in df_mgmt.columns:
             df_mgmt = df_mgmt[df_mgmt["Campaign_Name"] == selected_campaign]
-        if selected_platforms and "Platform" in df_mgmt.columns:
-            df_mgmt = df_mgmt[df_mgmt["Platform"].isin(selected_platforms)]
+        
+        # Apply dynamic dimension filters
+        for col_name, selected_values in selected_filters.items():
+            if selected_values and col_name in df_mgmt.columns:
+                df_mgmt = df_mgmt[df_mgmt[col_name].isin(selected_values)]
         if date_range and "Date" in df_mgmt.columns:
             df_mgmt = df_mgmt.copy()
             df_mgmt["Date"] = pd.to_datetime(df_mgmt["Date"], errors="coerce")
@@ -1025,66 +1263,6 @@ with tab_auto:
             for idx, (label, value) in enumerate(overview_metrics):
                 cols[idx].metric(label, value)
 
-        st.markdown("<div id='opportunities-risks'></div>", unsafe_allow_html=True)
-        st.markdown("## 💡 Opportunities & Risks")
-
-        # Nicely formatted opportunity cards
-        for opp in analysis["opportunities"]:
-            opp_type = opp.get("type", "Opportunity")
-            period = opp.get("period")
-            avg_roas = opp.get("avg_roas")
-            desc = opp.get("opportunity") or opp.get("description")
-            impact = opp.get("potential_impact") or opp.get("impact")
-
-            details = []
-            if period:
-                details.append(f"<strong>Period:</strong> {period}")
-            if avg_roas is not None:
-                try:
-                    details.append(f"<strong>Avg ROAS:</strong> {float(avg_roas):.2f}x")
-                except Exception:
-                    details.append(f"<strong>Avg ROAS:</strong> {avg_roas}")
-            if desc:
-                details.append(f"<strong>Why it matters:</strong> {desc}")
-            if impact:
-                details.append(f"<strong>Recommended action:</strong> {impact}")
-
-            body_html = "<br>".join(details)
-            card_html = (
-                "<div class='insight-card'>"
-                f"✅ <strong>{opp_type}</strong><br>"
-                f"{body_html}"
-                "</div>"
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
-
-        # Nicely formatted risk cards
-        for risk in analysis["risks"]:
-            severity = risk.get("severity", "Risk")
-            title = risk.get("risk", "Performance Risk")
-            details = risk.get("details")
-            impact = risk.get("impact")
-            action = risk.get("action")
-
-            lines = []
-            lines.append(f"<strong>Severity:</strong> {severity}")
-            lines.append(f"<strong>Risk:</strong> {title}")
-            if details:
-                lines.append(f"<strong>Details:</strong> {details}")
-            if impact:
-                lines.append(f"<strong>Impact:</strong> {impact}")
-            if action:
-                lines.append(f"<strong>Recommended action:</strong> {action}")
-
-            body_html = "<br>".join(lines)
-            card_html = (
-                "<div class='insight-card' style='border-left-color:#e74c3c'>"
-                f"⚠️ <strong>{title}</strong><br>"
-                f"{body_html}"
-                "</div>"
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
-
         # ===== NEW CHARTS SECTION =====
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
         st.markdown("<div id='performance-analytics'></div>", unsafe_allow_html=True)
@@ -1102,6 +1280,11 @@ with tab_auto:
         conv_col = _get_column(df, 'conversions')
         clicks_col = _get_column(df, 'clicks')
         impr_col = _get_column(df, 'impressions')
+        roas_col = _get_column(df, 'roas') or ('ROAS' if 'ROAS' in df.columns else None)
+        cpa_col = _get_column(df, 'cpa') or ('CPA' if 'CPA' in df.columns else None)
+        ctr_col = _get_column(df, 'ctr') or ('CTR' if 'CTR' in df.columns else None)
+        cpm_col = _get_column(df, 'cpm') or ('CPM' if 'CPM' in df.columns else None)
+        revenue_col = _get_column(df, 'revenue') or ('Revenue' if 'Revenue' in df.columns else None)
         
         # 1. Channel Performance Comparison
         if has_platform and (has_ctr or has_roas or has_cpa):
@@ -1162,151 +1345,407 @@ with tab_auto:
             df_trend['Date'] = pd.to_datetime(df_trend['Date'], errors='coerce')
             df_trend = df_trend.dropna(subset=['Date'])
             df_trend['Month_Year'] = df_trend['Date'].dt.to_period('M').astype(str)
-            
-            # Build all available metrics
-            all_metrics = []
-            monthly_agg_dict = {}
-            
-            if spend_col:
-                all_metrics.append(spend_col)
-                monthly_agg_dict[spend_col] = 'sum'
-            if conv_col:
-                all_metrics.append(conv_col)
-                monthly_agg_dict[conv_col] = 'sum'
-            if has_roas:
-                all_metrics.append('ROAS')
-                monthly_agg_dict['ROAS'] = 'mean'
-            if has_ctr:
-                all_metrics.append('CTR')
-                monthly_agg_dict['CTR'] = 'mean'
-            if has_cpa:
-                all_metrics.append('CPA')
-                monthly_agg_dict['CPA'] = 'mean'
-            if has_cpc:
-                all_metrics.append('CPC')
-                monthly_agg_dict['CPC'] = 'mean'
+
+            # Optional dimension filtering (Campaign, Placement, Funnel, Creative, Audience, etc.)
+            dimension_map = [
+                ("Campaign", _resolve_dimension_column(df_trend, ["Campaign_Name", "Campaign", "Campaign ID"])),
+                ("Placement", _resolve_dimension_column(df_trend, ["Placement", "Placement_Name", "Placement Type"])),
+                ("Funnel Stage", _get_funnel_column(df_trend)),
+                ("Creative", _resolve_dimension_column(df_trend, ["Creative", "Creative_Name", "Ad_Creative", "Ad Name"])),
+                ("Audience", _resolve_dimension_column(df_trend, ["Audience", "Audience_Name", "Segment", "Cohort"])),
+                ("Platform", _resolve_dimension_column(df_trend, ["Platform", "Channel", "Source"])),
+                ("Region", _resolve_dimension_column(df_trend, ["Region", "Country", "Geo", "Market"])),
+            ]
+
+            available_dimensions = {"All Data": None}
+            for label, column in dimension_map:
+                if column:
+                    available_dimensions[label] = column
+            dimension_options = sorted(available_dimensions.keys(), key=lambda x: (x != "All Data", x))
+
+            dim_col_label, dim_col_values = st.columns([1, 1])
+            metric_col1, metric_col2 = st.columns(2)
+
+            selected_dimension_label = dim_col_label.selectbox(
+                "Filter by Dimension (optional)",
+                options=dimension_options,
+                key="trend_dimension_label"
+            )
+            selected_dimension_col = available_dimensions[selected_dimension_label]
+
+            if selected_dimension_col:
+                unique_values = sorted(df_trend[selected_dimension_col].dropna().unique().tolist())
+                chosen_values = dim_col_values.multiselect(
+                    f"{selected_dimension_label} values",
+                    options=unique_values,
+                    default=unique_values if len(unique_values) <= 8 else unique_values[:8],
+                    key=f"trend_dimension_values_{selected_dimension_label}"
+                )
+                if chosen_values:
+                    df_trend = df_trend[df_trend[selected_dimension_col].isin(chosen_values)]
+
+            # Aggregate metrics by month
+            monthly_metrics = {spend_col: 'sum'}
             if clicks_col:
-                all_metrics.append(clicks_col)
-                monthly_agg_dict[clicks_col] = 'sum'
+                monthly_metrics[clicks_col] = 'sum'
+            if conv_col:
+                monthly_metrics[conv_col] = 'sum'
+            if impr_col:
+                monthly_metrics[impr_col] = 'sum'
+            if roas_col:
+                monthly_metrics[roas_col] = 'mean'
+            if cpa_col:
+                monthly_metrics[cpa_col] = 'mean'
+            if ctr_col:
+                monthly_metrics[ctr_col] = 'mean'
+            if cpm_col:
+                monthly_metrics[cpm_col] = 'mean'
+            if revenue_col:
+                monthly_metrics[revenue_col] = 'sum'
             
-            monthly_data = df_trend.groupby('Month_Year').agg(monthly_agg_dict).reset_index()
+            if df_trend.empty:
+                st.info("No data available for the selected filter. Showing empty chart.")
+                monthly_data = pd.DataFrame(columns=['Month_Year'] + list(monthly_metrics.keys()))
+            else:
+                monthly_data = df_trend.groupby('Month_Year').agg(monthly_metrics).reset_index()
             
-            # Let user select 2 metrics for dual-axis
-            col1, col2 = st.columns(2)
-            metric1 = col1.selectbox(
-                'Primary Metric (Left Axis)',
-                options=all_metrics,
-                index=0,
-                key='monthly_metric1'
-            )
-            metric2 = col2.selectbox(
-                'Secondary Metric (Right Axis)',
-                options=all_metrics,
-                index=min(1, len(all_metrics)-1),
-                key='monthly_metric2'
-            )
+            # Add derived metrics
+            if clicks_col and impr_col and clicks_col in monthly_data.columns and impr_col in monthly_data.columns:
+                monthly_data['CTR (calc %)'] = (monthly_data[clicks_col] / monthly_data[impr_col] * 100).round(2)
+            if conv_col and clicks_col and conv_col in monthly_data.columns and clicks_col in monthly_data.columns:
+                monthly_data['Conversion Rate (calc %)'] = (monthly_data[conv_col] / monthly_data[clicks_col] * 100).round(2)
+            if revenue_col and spend_col and revenue_col in monthly_data.columns and spend_col in monthly_data.columns:
+                monthly_data['ROAS (calc)'] = (monthly_data[revenue_col] / monthly_data[spend_col]).replace([np.inf, -np.inf], np.nan).round(2)
             
-            # Create dual-axis chart
-            from plotly.subplots import make_subplots
-            import plotly.graph_objects as go
+            numeric_columns = [col for col in monthly_data.columns if col != 'Month_Year']
+            all_metrics = numeric_columns
             
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-            
-            fig.add_trace(
-                go.Bar(x=monthly_data['Month_Year'], y=monthly_data[metric1], name=metric1, marker_color='#3b82f6'),
-                secondary_y=False,
-            )
-            
-            fig.add_trace(
-                go.Scatter(x=monthly_data['Month_Year'], y=monthly_data[metric2], name=metric2, mode='lines+markers', marker_color='#ec4899', line=dict(width=3)),
-                secondary_y=True,
-            )
-            
-            fig.update_xaxes(title_text="Month")
-            fig.update_yaxes(title_text=f"<b>{metric1}</b>", secondary_y=False)
-            fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
-            fig.update_layout(title_text="Monthly Performance Trends", height=400)
-            
-            st.plotly_chart(fig, use_container_width=True)
+            if not all_metrics:
+                st.warning("No numeric metrics available for trend chart.")
+            else:
+                metric1 = metric_col1.selectbox(
+                    'Primary Metric (Left Axis)',
+                    options=all_metrics,
+                    index=0,
+                    key='monthly_metric1'
+                )
+                metric2 = metric_col2.selectbox(
+                    'Secondary Metric (Right Axis)',
+                    options=all_metrics,
+                    index=min(1, len(all_metrics)-1),
+                    key='monthly_metric2'
+                )
+
+                # Create dual-axis chart
+                from plotly.subplots import make_subplots
+                import plotly.graph_objects as go
+                
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                fig.add_trace(
+                    go.Bar(x=monthly_data['Month_Year'], y=monthly_data[metric1], name=metric1, marker_color='#3b82f6'),
+                    secondary_y=False,
+                )
+                
+                fig.add_trace(
+                    go.Scatter(x=monthly_data['Month_Year'], y=monthly_data[metric2], name=metric2, mode='lines+markers', marker_color='#ec4899', line=dict(width=3)),
+                    secondary_y=True,
+                )
+                
+                fig.update_xaxes(title_text="Month")
+                fig.update_yaxes(title_text=f"<b>{metric1}</b>", secondary_y=False)
+                fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
+                fig.update_layout(title_text="Monthly Performance Trends", height=400)
+                
+                st.plotly_chart(fig, use_container_width=True)
         
-        # 3. Funnel Analysis (Clicks, CTR, Conversion Rate)
+        # 3. Funnel Analysis - CLEARLY DENOTE AWARENESS, CONSIDERATION & CONVERSION
         if has_date and clicks_col and conv_col:
-            st.markdown("### 🔄 Funnel Performance Trend")
+            st.markdown("### 🔄 Funnel Performance Trend Analysis")
+            st.markdown("**Performance across three funnel stages: Awareness → Consideration → Conversion**")
             
             df_funnel = df.copy()
             df_funnel['Date'] = pd.to_datetime(df_funnel['Date'], errors='coerce')
             df_funnel = df_funnel.dropna(subset=['Date'])
             df_funnel['Month_Year'] = df_funnel['Date'].dt.to_period('M').astype(str)
-            
-            # Calculate funnel metrics by month
-            funnel_agg = {clicks_col: 'sum'}
-            if conv_col:
-                funnel_agg[conv_col] = 'sum'
-            if impr_col:
-                funnel_agg[impr_col] = 'sum'
-            
-            funnel_monthly = df_funnel.groupby('Month_Year').agg(funnel_agg).reset_index()
-            
-            # Calculate rates
-            if impr_col and clicks_col in funnel_monthly.columns:
-                funnel_monthly['CTR'] = (funnel_monthly[clicks_col] / funnel_monthly[impr_col] * 100).round(2)
-            if clicks_col and conv_col and clicks_col in funnel_monthly.columns and conv_col in funnel_monthly.columns:
-                funnel_monthly['Conversion_Rate'] = (funnel_monthly[conv_col] / funnel_monthly[clicks_col] * 100).round(2)
-            
-            # Create multi-line chart with different colors for each funnel stage
-            import plotly.graph_objects as go
-            
-            fig = go.Figure()
-            
-            # Add Clicks (Blue)
-            if clicks_col in funnel_monthly.columns:
-                fig.add_trace(go.Scatter(
-                    x=funnel_monthly['Month_Year'],
-                    y=funnel_monthly[clicks_col],
-                    name='Clicks',
-                    mode='lines+markers',
-                    line=dict(color='#3b82f6', width=3),
-                    marker=dict(size=8)
-                ))
-            
-            # Add CTR (Green)
-            if 'CTR' in funnel_monthly.columns:
-                fig.add_trace(go.Scatter(
-                    x=funnel_monthly['Month_Year'],
-                    y=funnel_monthly['CTR'],
-                    name='CTR (%)',
-                    mode='lines+markers',
-                    line=dict(color='#10b981', width=3),
-                    marker=dict(size=8),
-                    yaxis='y2'
-                ))
-            
-            # Add Conversion Rate (Purple)
-            if 'Conversion_Rate' in funnel_monthly.columns:
-                fig.add_trace(go.Scatter(
-                    x=funnel_monthly['Month_Year'],
-                    y=funnel_monthly['Conversion_Rate'],
-                    name='Conversion Rate (%)',
-                    mode='lines+markers',
-                    line=dict(color='#8b5cf6', width=3),
-                    marker=dict(size=8),
-                    yaxis='y2'
-                ))
-            
-            fig.update_layout(
-                title='Funnel Performance: Clicks, CTR & Conversion Rate',
-                xaxis_title='Month',
-                yaxis_title='Clicks',
-                yaxis2=dict(
-                    title='Rate (%)',
-                    overlaying='y',
-                    side='right'
-                ),
-                height=400,
-                hovermode='x unified'
+            funnel_stage_col = _get_funnel_column(df_funnel)
+
+            if funnel_stage_col:
+                st.info(f"✅ Funnel column detected: `{funnel_stage_col}`")
+                stage_df = df_funnel.dropna(subset=[funnel_stage_col])
+                
+                # Debug: Show unique funnel values
+                unique_funnels = sorted(stage_df[funnel_stage_col].unique().tolist())
+                st.caption(f"Funnel stages found in data: {', '.join(map(str, unique_funnels))}")
+                
+                agg_dict = {clicks_col: 'sum', conv_col: 'sum'}
+                if impr_col:
+                    agg_dict[impr_col] = 'sum'
+                if spend_col:
+                    agg_dict[spend_col] = 'sum'
+                    
+                stage_monthly = (
+                    stage_df
+                    .groupby(['Month_Year', funnel_stage_col])
+                    .agg(agg_dict)
+                    .reset_index()
+                )
+
+                # Calculate key metrics for each funnel stage
+                if impr_col and impr_col in stage_monthly.columns:
+                    stage_monthly['CTR'] = (stage_monthly[clicks_col] / stage_monthly[impr_col] * 100).replace([np.inf, -np.inf], np.nan).round(2)
+                else:
+                    stage_monthly['CTR'] = np.nan
+                stage_monthly['Conversions'] = stage_monthly[conv_col]
+                
+                if spend_col and spend_col in stage_monthly.columns:
+                    stage_monthly['CPA'] = (stage_monthly[spend_col] / stage_monthly[conv_col]).replace([np.inf, -np.inf], np.nan).round(2)
+
+                from plotly.subplots import make_subplots
+                import plotly.graph_objects as go
+
+                # Create dual-axis chart
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+                # Define the three funnel stages with distinct colors and emojis
+                stage_order = ["Awareness", "Consideration", "Conversion"]
+                stage_emojis = {
+                    "Awareness": "👁️",
+                    "Consideration": "🤔", 
+                    "Conversion": "✅"
+                }
+                color_map = {
+                    "Awareness": "#3b82f6",      # Blue - Top of funnel
+                    "Consideration": "#f59e0b",  # Orange - Middle of funnel
+                    "Conversion": "#10b981"      # Green - Bottom of funnel
+                }
+
+                # Filter data to only include the three main funnel stages
+                stage_monthly = stage_monthly[stage_monthly[funnel_stage_col].isin(stage_order)]
+
+                # Add traces for each funnel stage
+                for stage in stage_order:
+                    stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                    if stage_subset.empty:
+                        continue
+                    
+                    color = color_map[stage]
+                    emoji = stage_emojis[stage]
+                    
+                    # Primary metric: CTR (solid line with markers)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=stage_subset['Month_Year'],
+                            y=stage_subset['CTR'],
+                            name=f"{emoji} {stage} - CTR",
+                            mode='lines+markers',
+                            line=dict(color=color, width=3.5),
+                            marker=dict(size=10, symbol='circle'),
+                            legendgroup=stage,
+                            hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                        ),
+                        secondary_y=False
+                    )
+                    
+                    # Secondary metric: Conversions (dashed line)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=stage_subset['Month_Year'],
+                            y=stage_subset['Conversions'],
+                            name=f"{emoji} {stage} - Conversions",
+                            mode='lines+markers',
+                            line=dict(color=color, width=2.5, dash='dot'),
+                            marker=dict(size=8, symbol='diamond'),
+                            legendgroup=stage,
+                            hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
+                        ),
+                        secondary_y=True
+                    )
+
+                # Update layout with clear funnel stage indicators
+                fig.update_layout(
+                    title={
+                        'text': '🔄 Funnel Performance: Awareness → Consideration → Conversion',
+                        'x': 0.5,
+                        'xanchor': 'center',
+                        'font': {'size': 16, 'color': '#e2e8f0'}
+                    },
+                    xaxis_title='Month',
+                    hovermode='x unified',
+                    height=450,
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        xanchor="left",
+                        x=1.02,
+                        bgcolor='rgba(30, 41, 59, 0.8)',
+                        bordercolor='rgba(148, 163, 184, 0.3)',
+                        borderwidth=1
+                    ),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                )
+                
+                # Update axes with clear labels
+                fig.update_yaxes(
+                    title_text='<b>CTR (%)</b>', 
+                    secondary_y=False,
+                    showgrid=True,
+                    gridcolor='rgba(128,128,128,0.2)'
+                )
+                fig.update_yaxes(
+                    title_text='<b>Conversions</b>', 
+                    secondary_y=True,
+                    showgrid=False
+                )
+                fig.update_xaxes(
+                    showgrid=True,
+                    gridcolor='rgba(128,128,128,0.2)'
+                )
+
+                # Add summary metrics for each funnel stage BEFORE chart
+                st.markdown("#### 📊 Funnel Stage Summary")
+                funnel_cols = st.columns(3)
+                
+                for idx, stage in enumerate(stage_order):
+                    stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                    if not stage_data.empty:
+                        with funnel_cols[idx]:
+                            emoji = stage_emojis[stage]
+                            avg_ctr = stage_data['CTR'].mean()
+                            total_conv = stage_data['Conversions'].sum()
+                            
+                            st.markdown(f"**{emoji} {stage}**")
+                            st.metric("Avg CTR", f"{avg_ctr:.2f}%" if not pd.isna(avg_ctr) else "N/A")
+                            st.metric("Total Conversions", f"{total_conv:,.0f}" if not pd.isna(total_conv) else "N/A")
+                            
+                            if 'CPA' in stage_data.columns:
+                                avg_cpa = stage_data['CPA'].mean()
+                                if not pd.isna(avg_cpa):
+                                    st.metric("Avg CPA", f"${avg_cpa:.2f}")
+                
+                # Show the chart
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # No funnel column detected - show warning
+                st.warning("⚠️ **No Funnel Stage column detected in your data.**\n\n"
+                          "To see performance by funnel stage (Awareness, Consideration, Conversion), "
+                          "please ensure your data has a column named one of: `Funnel_Stage`, `Funnel`, `Stage`, or `Campaign_Type` "
+                          "with values: 'Awareness', 'Consideration', 'Conversion'.\n\n"
+                          "**Showing aggregate funnel metrics instead:**")
+                
+                # Fall back to aggregate view if no funnel dimension detected
+                funnel_agg = {clicks_col: 'sum'}
+                if conv_col:
+                    funnel_agg[conv_col] = 'sum'
+                if impr_col:
+                    funnel_agg[impr_col] = 'sum'
+                funnel_monthly = df_funnel.groupby('Month_Year').agg(funnel_agg).reset_index()
+                if impr_col and clicks_col in funnel_monthly.columns:
+                    funnel_monthly['CTR'] = (funnel_monthly[clicks_col] / funnel_monthly[impr_col] * 100).round(2)
+                if clicks_col and conv_col and clicks_col in funnel_monthly.columns and conv_col in funnel_monthly.columns:
+                    funnel_monthly['Conversion_Rate'] = (funnel_monthly[conv_col] / funnel_monthly[clicks_col] * 100).round(2)
+
+                import plotly.graph_objects as go
+                fig = go.Figure()
+                if clicks_col in funnel_monthly.columns:
+                    fig.add_trace(go.Scatter(
+                        x=funnel_monthly['Month_Year'],
+                        y=funnel_monthly[clicks_col],
+                        name='Clicks',
+                        mode='lines+markers',
+                        line=dict(color='#3b82f6', width=3)
+                    ))
+                if 'CTR' in funnel_monthly.columns:
+                    fig.add_trace(go.Scatter(
+                        x=funnel_monthly['Month_Year'],
+                        y=funnel_monthly['CTR'],
+                        name='CTR (%)',
+                        mode='lines+markers',
+                        line=dict(color='#10b981', width=3),
+                        yaxis='y2'
+                    ))
+                if 'Conversion_Rate' in funnel_monthly.columns:
+                    fig.add_trace(go.Scatter(
+                        x=funnel_monthly['Month_Year'],
+                        y=funnel_monthly['Conversion_Rate'],
+                        name='Conversion Rate (%)',
+                        mode='lines+markers',
+                        line=dict(color='#8b5cf6', width=3),
+                        yaxis='y2'
+                    ))
+                fig.update_layout(
+                    title='Funnel Performance: Clicks, CTR & Conversion Rate',
+                    xaxis_title='Month',
+                    yaxis_title='Clicks',
+                    yaxis2=dict(title='Rate (%)', overlaying='y', side='right'),
+                    height=400,
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Move Opportunities & Risks here (after Funnel chart)
+        st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        st.markdown("<div id='opportunities-risks'></div>", unsafe_allow_html=True)
+        st.markdown("## 💡 Opportunities & Risks")
+
+        # Nicely formatted opportunity cards
+        for opp in analysis["opportunities"]:
+            opp_type = opp.get("type", "Opportunity")
+            period = opp.get("period")
+            avg_roas = opp.get("avg_roas")
+            desc = opp.get("opportunity") or opp.get("description")
+            impact = opp.get("potential_impact") or opp.get("impact")
+
+            details = []
+            if period:
+                details.append(f"<strong>Period:</strong> {period}")
+            if avg_roas is not None:
+                try:
+                    details.append(f"<strong>Avg ROAS:</strong> {float(avg_roas):.2f}x")
+                except Exception:
+                    details.append(f"<strong>Avg ROAS:</strong> {avg_roas}")
+            if desc:
+                details.append(f"<strong>Why it matters:</strong> {desc}")
+            if impact:
+                details.append(f"<strong>Recommended action:</strong> {impact}")
+
+            body_html = "<br>".join(details)
+            card_html = (
+                "<div class='insight-card'>"
+                f"✅ <strong>{opp_type}</strong><br>"
+                f"{body_html}"
+                "</div>"
             )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown(card_html, unsafe_allow_html=True)
+
+        # Nicely formatted risk cards
+        for risk in analysis["risks"]:
+            severity = risk.get("severity", "Risk")
+            title = risk.get("risk", "Performance Risk")
+            details = risk.get("details")
+            impact = risk.get("impact")
+            action = risk.get("action")
+
+            lines = []
+            lines.append(f"<strong>Severity:</strong> {severity}")
+            lines.append(f"<strong>Risk:</strong> {title}")
+            if details:
+                lines.append(f"<strong>Details:</strong> {details}")
+            if impact:
+                lines.append(f"<strong>Impact:</strong> {impact}")
+            if action:
+                lines.append(f"<strong>Recommended action:</strong> {action}")
+
+            body_html = "<br>".join(lines)
+            card_html = (
+                "<div class='insight-card' style='border-left-color:#e74c3c'>"
+                f"⚠️ <strong>{title}</strong><br>"
+                f"{body_html}"
+                "</div>"
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
         
         # 4. Correlation Analysis
         if spend_col and conv_col and (has_ctr or has_roas):
@@ -1382,7 +1821,7 @@ with tab_qa:
     else:
         # Lazily initialize the NL → SQL engine and orchestrator
         if st.session_state.query_engine is None:
-            api_key = os.getenv("OPENAI_API_KEY", "")
+            api_key = get_api_key("OPENAI_API_KEY", "OPENAI_API_KEY")
             if not api_key:
                 st.error("❌ OPENAI_API_KEY not found. Set it in your .env to use Q&A.")
             else:
@@ -1402,9 +1841,31 @@ with tab_qa:
             placeholder="e.g., sort by funnel performance, show top campaigns, what are the KPIs",
             key="user_query_input"
         )
-        
+
+        data_loaded = st.session_state.df is not None
+        engine_ready = st.session_state.query_engine is not None
+
+        status_col, button_col = st.columns([3, 1])
+        with status_col:
+            if data_loaded:
+                st.success(f"✅ Data loaded ({len(st.session_state.df):,} rows · {len(st.session_state.df.columns)} columns)")
+            else:
+                st.warning("⚠️ No dataset loaded yet. Upload data on the Auto Analysis tab.")
+
+            if data_loaded and not engine_ready:
+                st.info("Initializing Q&A engine...")
+
+        with button_col:
+            ask_disabled = not (data_loaded and engine_ready and user_query.strip())
+            ask_clicked = st.button(
+                "🚀 Ask Question",
+                type="primary",
+                use_container_width=True,
+                disabled=ask_disabled,
+            )
+
         # Direct execution only - no interpretation layer
-        if st.button("🚀 Ask Question", type="primary", use_container_width=True) and user_query:
+        if ask_clicked:
             if st.session_state.query_engine:
                 with st.spinner("🔄 Generating SQL & running query..."):
                     try:
@@ -1497,55 +1958,181 @@ with tab_qa:
                 numeric_cols = results_df.select_dtypes(include=['number']).columns.tolist()
                 categorical_cols = results_df.select_dtypes(include=['object', 'category']).columns.tolist()
                 
-                # Smart chart generation based on data structure
+                # Smart chart generation based on data structure with priority metrics
                 if len(results_df) > 0:
+                    # Define priority metrics (most important first)
+                    priority_metrics = [
+                        'CTR', 'Conversions', 'Conversion_Rate', 'ROAS', 'CPA', 'CPC',
+                        'Revenue', 'Spend', 'Clicks', 'Impressions'
+                    ]
+                    
+                    # Helper function to prioritize metrics
+                    def prioritize_metrics(cols, priority_list, max_count=3):
+                        """Select most important metrics based on priority list."""
+                        prioritized = []
+                        # First add priority metrics that exist
+                        for metric in priority_list:
+                            matching = [col for col in cols if metric.lower() in col.lower()]
+                            prioritized.extend(matching)
+                            if len(prioritized) >= max_count:
+                                break
+                        # Then add remaining metrics if needed
+                        for col in cols:
+                            if col not in prioritized:
+                                prioritized.append(col)
+                            if len(prioritized) >= max_count:
+                                break
+                        return prioritized[:max_count]
+                    
                     # Case 1: Single row with multiple metrics (show as bar chart)
                     if len(results_df) == 1 and len(numeric_cols) > 1:
+                        # Prioritize metrics
+                        selected_metrics = prioritize_metrics(numeric_cols, priority_metrics, max_count=5)
                         chart_data = pd.DataFrame({
-                            'Metric': numeric_cols,
-                            'Value': [results_df[col].iloc[0] for col in numeric_cols]
+                            'Metric': selected_metrics,
+                            'Value': [results_df[col].iloc[0] for col in selected_metrics]
                         })
-                        fig = px.bar(chart_data, x='Metric', y='Value', title='Query Results')
+                        fig = px.bar(chart_data, x='Metric', y='Value', title='Key Metrics Overview')
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # Case 2: Multiple rows with 1 categorical + 1-2 numeric (bar/line chart)
+                    # Case 2: Multiple rows with 1 categorical + numeric (ALWAYS use dual-axis for 2+ metrics)
                     elif len(categorical_cols) >= 1 and len(numeric_cols) >= 1:
                         x_col = categorical_cols[0]
                         
-                        # If there are 2 numeric columns, let user choose or show both
-                        if len(numeric_cols) == 1:
-                            y_col = numeric_cols[0]
-                            fig = px.bar(results_df, x=x_col, y=y_col, title=f'{y_col} by {x_col}')
-                        elif len(numeric_cols) == 2:
-                            # Dual metric chart
+                        # Prioritize numeric columns - always get top 2 for dual-axis
+                        selected_metrics = prioritize_metrics(numeric_cols, priority_metrics, max_count=2)
+                        
+                        if len(selected_metrics) == 1:
+                            # Single metric - simple bar chart
+                            y_col = selected_metrics[0]
+                            fig = px.bar(results_df, x=x_col, y=y_col, title=f'{y_col} by {x_col}',
+                                       color_discrete_sequence=['#3498db'])
+                        else:
+                            # 2+ metrics - DUAL-AXIS chart with priority metrics
                             from plotly.subplots import make_subplots
                             import plotly.graph_objects as go
                             
                             fig = make_subplots(specs=[[{"secondary_y": True}]])
+                            
+                            # Primary metric (bar chart) - typically the more important one
                             fig.add_trace(
-                                go.Bar(x=results_df[x_col], y=results_df[numeric_cols[0]], name=numeric_cols[0], marker_color='#3498db'),
+                                go.Bar(
+                                    x=results_df[x_col], 
+                                    y=results_df[selected_metrics[0]], 
+                                    name=selected_metrics[0], 
+                                    marker_color='#3498db',
+                                    marker_line_color='#2980b9',
+                                    marker_line_width=1.5
+                                ),
                                 secondary_y=False,
                             )
+                            
+                            # Secondary metric (line chart) - complementary metric
                             fig.add_trace(
-                                go.Scatter(x=results_df[x_col], y=results_df[numeric_cols[1]], name=numeric_cols[1], mode='lines+markers', marker_color='#e74c3c'),
+                                go.Scatter(
+                                    x=results_df[x_col], 
+                                    y=results_df[selected_metrics[1]], 
+                                    name=selected_metrics[1], 
+                                    mode='lines+markers', 
+                                    marker=dict(size=8, color='#e74c3c', line=dict(width=2, color='#c0392b')),
+                                    line=dict(width=3, color='#e74c3c')
+                                ),
                                 secondary_y=True,
                             )
-                            fig.update_xaxes(title_text=x_col)
-                            fig.update_yaxes(title_text=numeric_cols[0], secondary_y=False)
-                            fig.update_yaxes(title_text=numeric_cols[1], secondary_y=True)
-                            fig.update_layout(title_text=f'{numeric_cols[0]} & {numeric_cols[1]} by {x_col}')
-                        else:
-                            # Multiple metrics - show first 3
-                            y_cols = numeric_cols[:3]
-                            fig = px.bar(results_df, x=x_col, y=y_cols, title=f'Metrics by {x_col}', barmode='group')
+                            
+                            # Update axes
+                            fig.update_xaxes(title_text=x_col, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+                            fig.update_yaxes(title_text=selected_metrics[0], secondary_y=False, 
+                                           showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+                            fig.update_yaxes(title_text=selected_metrics[1], secondary_y=True,
+                                           showgrid=False)
+                            
+                            # Update layout
+                            fig.update_layout(
+                                title_text=f'{selected_metrics[0]} & {selected_metrics[1]} by {x_col}',
+                                hovermode='x unified',
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                font=dict(size=12),
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom",
+                                    y=1.02,
+                                    xanchor="right",
+                                    x=1
+                                )
+                            )
                         
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # Case 3: Time series data (Date column + numeric)
+                    # Case 3: Time series data (Date column + numeric) - DUAL-AXIS for trends
                     elif any('date' in col.lower() or 'month' in col.lower() or 'year' in col.lower() for col in categorical_cols) and len(numeric_cols) >= 1:
                         date_col = next((col for col in categorical_cols if 'date' in col.lower() or 'month' in col.lower() or 'year' in col.lower()), categorical_cols[0])
-                        y_cols = numeric_cols[:3]  # Show up to 3 metrics
-                        fig = px.line(results_df, x=date_col, y=y_cols, title=f'Trend Analysis', markers=True)
+                        
+                        # Prioritize metrics for time series
+                        selected_metrics = prioritize_metrics(numeric_cols, priority_metrics, max_count=2)
+                        
+                        if len(selected_metrics) == 1:
+                            # Single metric trend
+                            fig = px.line(results_df, x=date_col, y=selected_metrics[0], 
+                                        title=f'{selected_metrics[0]} Trend', markers=True,
+                                        color_discrete_sequence=['#3498db'])
+                        else:
+                            # Dual-axis time series
+                            from plotly.subplots import make_subplots
+                            import plotly.graph_objects as go
+                            
+                            fig = make_subplots(specs=[[{"secondary_y": True}]])
+                            
+                            # Primary metric (line)
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=results_df[date_col], 
+                                    y=results_df[selected_metrics[0]], 
+                                    name=selected_metrics[0],
+                                    mode='lines+markers',
+                                    marker=dict(size=6, color='#3498db'),
+                                    line=dict(width=2.5, color='#3498db')
+                                ),
+                                secondary_y=False,
+                            )
+                            
+                            # Secondary metric (line)
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=results_df[date_col], 
+                                    y=results_df[selected_metrics[1]], 
+                                    name=selected_metrics[1],
+                                    mode='lines+markers',
+                                    marker=dict(size=6, color='#e74c3c'),
+                                    line=dict(width=2.5, color='#e74c3c')
+                                ),
+                                secondary_y=True,
+                            )
+                            
+                            # Update axes
+                            fig.update_xaxes(title_text=date_col, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+                            fig.update_yaxes(title_text=selected_metrics[0], secondary_y=False,
+                                           showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+                            fig.update_yaxes(title_text=selected_metrics[1], secondary_y=True,
+                                           showgrid=False)
+                            
+                            # Update layout
+                            fig.update_layout(
+                                title_text=f'{selected_metrics[0]} & {selected_metrics[1]} Trend',
+                                hovermode='x unified',
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                font=dict(size=12),
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom",
+                                    y=1.02,
+                                    xanchor="right",
+                                    x=1
+                                )
+                            )
+                        
                         st.plotly_chart(fig, use_container_width=True)
                     
                     # Case 4: Just numeric columns (correlation heatmap or scatter)
@@ -1581,7 +2168,7 @@ with tab_qa:
                 st.info("No data returned.")
 
             if result_data.get("answer"):
-                st.markdown("### 💡 Insight")
+                st.markdown("### 💡 Insight Analysis")
                 
                 # Format the insight professionally
                 insight_text = result_data["answer"]
@@ -1615,7 +2202,7 @@ with tab_qa:
                 # Preserve line breaks
                 insight_text = insight_text.replace('\n', '<br>')
                 
-                # Create a professional card for the insight
+                # Create a professional card with scrollable content
                 insight_html = f"""
                 <div style='
                     background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
@@ -1630,11 +2217,18 @@ with tab_qa:
                     font-size: 0.95rem;
                     line-height: 1.8;
                     letter-spacing: 0.01em;
+                    max-height: 400px;
+                    overflow-y: auto;
                 '>
                     {insight_text}
                 </div>
                 """
                 st.markdown(insight_html, unsafe_allow_html=True)
+                
+                # Add "Show More" expander for very long insights
+                if len(insight_text) > 1500:
+                    with st.expander("📖 View Full Analysis"):
+                        st.markdown(result_data["answer"])
 
             col_fb1, col_fb2, col_fb3 = st.columns(3)
             if col_fb1.button("👍 Helpful"):

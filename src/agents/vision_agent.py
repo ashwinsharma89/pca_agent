@@ -8,7 +8,6 @@ from pathlib import Path
 import asyncio
 
 from openai import AsyncOpenAI
-from anthropic import AsyncAnthropic
 from loguru import logger
 
 from ..models.platform import (
@@ -22,6 +21,7 @@ from ..models.platform import (
     PLATFORM_CONFIGS
 )
 from ..config.settings import settings
+from ..utils.anthropic_helpers import create_async_anthropic_client
 
 
 class VisionAgent:
@@ -45,7 +45,9 @@ class VisionAgent:
         if provider == "openai":
             self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         elif provider == "anthropic":
-            self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            self.client = create_async_anthropic_client(settings.anthropic_api_key)
+            if not self.client:
+                raise ValueError("Failed to initialize Anthropic async client. Check ANTHROPIC_API_KEY or SDK support.")
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         
