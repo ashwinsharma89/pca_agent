@@ -8,7 +8,7 @@ import pandas as pd
 from loguru import logger
 import asyncio
 
-from src.rag.enhanced_reasoning import EnhancedReasoningEngine
+from src.knowledge.enhanced_reasoning import EnhancedReasoningEngine
 from src.mcp.client import PCAMCPClient
 
 
