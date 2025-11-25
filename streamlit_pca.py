@@ -1804,7 +1804,8 @@ with tab_auto:
             df_line = df_mgmt.copy()
             df_line["Date"] = pd.to_datetime(df_line["Date"], errors="coerce")
             df_line = df_line.dropna(subset=["Date"])
-            df_line["Week"] = df_line["Date"].dt.to_period('W').astype(str)
+            # Use week start date only (Monday)
+            df_line["Week"] = df_line["Date"].dt.to_period('W').dt.start_time.dt.strftime('%Y-%m-%d')
             
             # Build aggregation for weekly data
             weekly_agg = {}
@@ -2233,11 +2234,12 @@ with tab_auto:
                     st.markdown("#### 📊 Funnel Stage Summary")
                     funnel_cols = st.columns(3)
                     
+                    # Display all three stages
                     for idx, stage in enumerate(stage_order):
                         stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
-                        if not stage_data.empty:
-                            with funnel_cols[idx]:
-                                emoji = stage_emojis[stage]
+                        with funnel_cols[idx]:
+                            emoji = stage_emojis[stage]
+                            if not stage_data.empty:
                                 avg_ctr = stage_data['CTR'].mean()
                                 total_conv = stage_data['Conversions'].sum()
                                 
@@ -2249,6 +2251,10 @@ with tab_auto:
                                     avg_cpa = stage_data['CPA'].mean()
                                     if not pd.isna(avg_cpa):
                                         st.metric("Avg CPA", f"${avg_cpa:.2f}")
+                            else:
+                                # Show placeholder for missing stage
+                                st.markdown(f"**{emoji} {stage}**")
+                                st.caption("No data available")
                     
                     # Show the chart only if we have traces
                     if len(fig.data) > 0:
