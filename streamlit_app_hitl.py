@@ -1092,6 +1092,9 @@ with tab_auto:
                     import uuid
                     import time
                     
+                    # Create analyzer instance for RAG
+                    analyzer = MediaAnalyticsExpert()
+                    
                     # Generate RAG summary
                     metrics = analysis.get("metrics", {})
                     insights = analysis.get("insights", [])
