@@ -1052,7 +1052,16 @@ with tab_auto:
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
         
         st.markdown("<div id='executive-summary'></div>", unsafe_allow_html=True)
-        st.markdown("## 📊 Executive Summary")
+        
+        # RAG Comparison Toggle
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown("## 📊 Executive Summary")
+        with col2:
+            enable_rag_comparison = st.toggle("🔬 Compare with RAG", value=False, help="Generate RAG-enhanced summary for comparison")
+        with col3:
+            if enable_rag_comparison:
+                st.caption("🧪 Experimental")
         
         exec_summary_raw = analysis.get("executive_summary")
         
@@ -1071,23 +1080,166 @@ with tab_auto:
         else:
             logger.warning("⚠️ No executive summary found in analysis results")
         
-        # Show brief summary
-        if brief_summary:
-            st.markdown(brief_summary)
-        else:
-            # Fallback to highlights if LLM failed
-            st.warning("⚠️ Executive summary generation failed. Showing key highlights instead:")
-            highlights = _build_key_highlights(analysis)
-            if highlights:
-                for point in highlights:
-                    st.markdown(f"• {point}")
-            else:
-                st.error("Unable to generate executive summary or highlights. Check API keys and try again.")
+        # Generate RAG summary if comparison enabled
+        rag_brief_summary = None
+        rag_detailed_summary = None
+        rag_metadata = None
         
-        # Show detailed summary in an expander
-        if detailed_summary:
-            with st.expander("📄 View Detailed Executive Summary", expanded=False):
-                st.markdown(detailed_summary)
+        if enable_rag_comparison and brief_summary:
+            try:
+                with st.spinner("🔬 Generating RAG-enhanced summary..."):
+                    from src.utils.comparison_logger import ComparisonLogger
+                    import uuid
+                    import time
+                    
+                    # Generate RAG summary
+                    metrics = analysis.get("metrics", {})
+                    insights = analysis.get("insights", [])
+                    recommendations = analysis.get("recommendations", [])
+                    
+                    start_time = time.time()
+                    rag_result = analyzer._generate_executive_summary_with_rag(metrics, insights, recommendations)
+                    rag_latency = time.time() - start_time
+                    
+                    if isinstance(rag_result, dict):
+                        rag_brief_summary = _strip_light_markup(rag_result.get("brief", ""))
+                        rag_detailed_summary = _strip_light_markup(rag_result.get("detailed", ""))
+                        rag_metadata = rag_result.get("rag_metadata", {})
+                        
+                        # Log comparison
+                        session_id = st.session_state.get('session_id', str(uuid.uuid4())[:8])
+                        campaign_id = selected_campaign if selected_campaign != "All Campaigns" else "all_campaigns"
+                        
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_comparison(
+                            session_id=session_id,
+                            campaign_id=campaign_id,
+                            standard_result={
+                                'summary_brief': brief_summary,
+                                'summary_detailed': detailed_summary,
+                                'tokens_input': 2500,  # Estimated
+                                'tokens_output': len(brief_summary.split()) * 1.3,
+                                'cost': 0.015,
+                                'latency': 2.5,
+                                'model': 'standard'
+                            },
+                            rag_result={
+                                'summary_brief': rag_brief_summary,
+                                'summary_detailed': rag_detailed_summary,
+                                'tokens_input': rag_metadata.get('tokens_input', 0),
+                                'tokens_output': rag_metadata.get('tokens_output', 0),
+                                'cost': 0.022,
+                                'latency': rag_latency,
+                                'model': rag_metadata.get('model', 'unknown'),
+                                'knowledge_sources': rag_metadata.get('knowledge_sources', [])
+                            }
+                        )
+                        
+                        logger.info(f"✅ RAG comparison generated and logged (session: {session_id})")
+            except Exception as e:
+                logger.error(f"❌ RAG comparison failed: {e}")
+                st.error(f"RAG comparison failed: {str(e)}")
+        
+        # Display summaries
+        if enable_rag_comparison and rag_brief_summary:
+            # Side-by-side comparison
+            st.markdown("### 📊 Comparison View")
+            
+            col_standard, col_rag = st.columns(2)
+            
+            with col_standard:
+                st.markdown("#### 📄 Standard Summary")
+                st.info(brief_summary)
+                
+                if detailed_summary:
+                    with st.expander("📄 View Detailed", expanded=False):
+                        st.markdown(detailed_summary)
+            
+            with col_rag:
+                st.markdown("#### 🔬 RAG-Enhanced Summary")
+                st.success(rag_brief_summary)
+                
+                if rag_metadata:
+                    st.caption(f"🧠 Knowledge sources: {rag_metadata.get('retrieval_count', 0)} | "
+                             f"⏱️ {rag_metadata.get('latency', 0):.1f}s | "
+                             f"💰 +{((rag_metadata.get('tokens_input', 0) / 2500 - 1) * 100):.0f}% tokens")
+                
+                if rag_detailed_summary:
+                    with st.expander("📄 View Detailed", expanded=False):
+                        st.markdown(rag_detailed_summary)
+            
+            # Feedback section
+            st.markdown("---")
+            st.markdown("#### 💬 Which summary do you prefer?")
+            
+            feedback_col1, feedback_col2, feedback_col3, feedback_col4 = st.columns([1, 1, 1, 2])
+            
+            with feedback_col1:
+                if st.button("👍 Standard", key="prefer_standard"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='standard',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User preferred standard summary"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+            
+            with feedback_col2:
+                if st.button("👍 RAG-Enhanced", key="prefer_rag"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='rag',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User preferred RAG-enhanced summary"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+            
+            with feedback_col3:
+                if st.button("🤷 Same Quality", key="prefer_same"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='same',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User found both summaries equally good"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+        
+        else:
+            # Standard display (no comparison)
+            if brief_summary:
+                st.markdown(brief_summary)
+            else:
+                # Fallback to highlights if LLM failed
+                st.warning("⚠️ Executive summary generation failed. Showing key highlights instead:")
+                highlights = _build_key_highlights(analysis)
+                if highlights:
+                    for point in highlights:
+                        st.markdown(f"• {point}")
+                else:
+                    st.error("Unable to generate executive summary or highlights. Check API keys and try again.")
+            
+            # Show detailed summary in an expander
+            if detailed_summary:
+                with st.expander("📄 View Detailed Executive Summary", expanded=False):
+                    st.markdown(detailed_summary)
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
