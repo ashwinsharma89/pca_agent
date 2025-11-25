@@ -7,7 +7,7 @@ import asyncio
 from typing import Optional, Dict, Any, List
 import pandas as pd
 from loguru import logger
-from mcp.client import Client, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters
 from mcp.types import Resource
 import json
 
@@ -17,25 +17,19 @@ class PCAMCPClient:
     
     def __init__(self):
         """Initialize MCP client."""
-        self.client: Optional[Client] = None
+        self.client: Optional[ClientSession] = None
         self.connected = False
         logger.info("PCA MCP Client initialized")
     
     async def connect(self, server_params: Optional[StdioServerParameters] = None):
         """Connect to MCP server."""
         try:
-            if server_params is None:
-                # Connect to local server
-                from src.mcp.resource_server import get_mcp_server
-                self.server = get_mcp_server()
-                self.connected = True
-                logger.success("Connected to local MCP server")
-            else:
-                # Connect to remote server
-                self.client = Client(server_params)
-                await self.client.connect()
-                self.connected = True
-                logger.success("Connected to remote MCP server")
+            # For now, only support local server
+            # Remote MCP connections can be added later
+            from src.mcp.resource_server import get_mcp_server
+            self.server = get_mcp_server()
+            self.connected = True
+            logger.success("Connected to local MCP server")
                 
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
@@ -47,11 +41,8 @@ class PCAMCPClient:
             raise RuntimeError("Not connected to MCP server")
         
         try:
-            if self.client:
-                resources = await self.client.list_resources()
-            else:
-                # Local server
-                resources = await self.server.server.list_resources()()
+            # Local server
+            resources = await self.server.server.list_resources()()
             
             logger.info(f"Found {len(resources)} resources")
             return resources
@@ -68,11 +59,8 @@ class PCAMCPClient:
         try:
             logger.info(f"Reading resource: {uri}")
             
-            if self.client:
-                content = await self.client.read_resource(uri)
-            else:
-                # Local server
-                content = await self.server.server.read_resource()(uri)
+            # Local server
+            content = await self.server.server.read_resource()(uri)
             
             # Parse JSON response
             data = json.loads(content)
@@ -155,8 +143,6 @@ class PCAMCPClient:
     
     async def disconnect(self):
         """Disconnect from MCP server."""
-        if self.client:
-            await self.client.disconnect()
         self.connected = False
         logger.info("Disconnected from MCP server")
 
