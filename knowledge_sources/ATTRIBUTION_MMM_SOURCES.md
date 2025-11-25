@@ -99,6 +99,30 @@ Multi-Touch Attribution (MTA) is a marketing measurement approach that assigns c
 - Scalable attribution pipelines
 - Data engineering for MTA
 
+#### Treasure Data x ARM - Multi-Touch Attribution Guide (PDF)
+**Source**: https://www.treasuredata.com/wp-content/uploads/multitouch-attribution-guide-arm-treasure-data.pdf  
+**Key Topics**:
+- Privacy-safe MTA architecture that fuses CDP, clean rooms, and incremental testing
+- Touchpoint data standardization and identity resolution blueprints
+- KPI ladders for upper, mid, and lower-funnel measurement
+- Implementation roadmap including stakeholder alignment, data governance, and success metrics
+
+#### DMA (UK) - Guide to Multi-Touch Attribution (2025)
+**Source**: https://unifida.co.uk/wp-content/uploads/2025/02/DMA-Guide-to-multi-touch-attribution-.pdf  
+**Key Topics**:
+- Regulatory-compliant attribution practices for the post-cookie era
+- Decision trees for selecting heuristic vs algorithmic models
+- Vendor evaluation checklist and RFP questions
+- Case studies covering retail, financial services, and subscription businesses
+
+#### Amazon Ads Research - Multi-Touch Attribution (arXiv 2508.08209)
+**Source**: https://arxiv.org/abs/2508.08209  
+**Key Topics**:
+- Blended methodology that fuses randomized controlled trials with machine-learned attribution models
+- Calibration of observational ML predictions using experimental lift signals
+- Use of Amazon shopping graph signals for path reconstruction and deduplication
+- Framework for allocating incremental value across Amazon Ads touchpoints based on causal contribution
+
 ### Priority 2 (P2) MTA Resources
 
 #### LeadsRX - Evolution of MTA (2024)
@@ -216,6 +240,46 @@ Marketing Mix Modeling (MMM) is a statistical analysis technique that measures t
 - Automated MMM platforms
 - Real-time MMM
 
+#### Google - Marketing Mix Modeling Article (PDF)
+**Source**: https://services.google.com/fh/files/misc/article_marketing_mix_modeling_final.pdf  
+**Key Topics**:
+- Google’s MMM maturity framework (foundation → acceleration → automation)
+- Media taxonomy templates and data requirements checklist
+- MMM/experimentation “triangle” for validation loops
+- How to pair MMM with on-platform lift studies
+
+#### Meta & Publicis Sapient - Two-Stage Mixed-Methods MMM (Whitepaper)
+**Source**: https://assets.ctfassets.net/inb32lme5009/2eD3K3kg7MxeECz3fBreqU/997ac86875ea6f2916c7db5f060ebcf8/FINAL_White_paper__Two-stage_Mixed-Methods_MMM_-__English__2024June17.docx.pdf  
+**Key Topics**:
+- Hybrid MMM approach combining econometrics with Bayesian structural time series
+- Stage 1: national model, Stage 2: granular clustering for localized recommendations
+- Practical guardrails for multicollinearity, seasonality, and adstock priors
+- Governance model for global brands running MMM across 50+ markets
+
+#### DataLion - MMM Whitepaper
+**Source**: https://datalion.com/whitepaper-marketing-mix-modeling/  
+**Key Topics**:
+- MMM implementation in BI stacks
+- Model calibration workflows inside dashboards
+- Visualization techniques for saturation curves and ROI waterfalls
+- Checklist for aligning MMM outputs with decision-making cadence
+
+#### Decision Analyst - MMM Whitepaper
+**Source**: https://www.decisionanalyst.com/whitepapers/marketingmixmodeling/  
+**Key Topics**:
+- Guidelines for balancing statistical rigor with business interpretability
+- Handling promo calendars, weather, and macro factors
+- Interpreting elasticity tables for CFO audiences
+- Change management lessons from consumer-packaged-goods MMM deployments
+
+#### Google Ads & YouTube - Definitive Guide to Data-Driven Attribution
+**Source**: https://services.google.com/fh/files/misc/gatt360_definitive_guide_to_data-driven_attribution_white_paper.pdf  
+**Key Topics**:
+- Transition path from last-click to DDA using Google’s measurement stack
+- Data prerequisites (conversion volume, lookback windows, tagging hygiene)
+- Executive scorecards for communicating DDA lift
+- Governance for continuous calibration with MMM and lift tests
+
 ### Priority 2 (P2) MMM Resources
 
 #### Sellforte - MMM Pilot Best Practices
@@ -330,6 +394,7 @@ The most effective measurement strategy combines both MTA and MMM:
 - **Unified Measurement**: Combining MTA, MMM, and incrementality
 - **Real-Time MMM**: Faster model updates and insights
 - **Cross-Platform Attribution**: Better mobile app and web integration
+- **Experiment-Calibrated MTA**: Integrating RCTs with ML models (e.g., Amazon Ads MTA research)
 
 ### Preparing for the Future
 1. **Invest in First-Party Data**: Build robust data collection

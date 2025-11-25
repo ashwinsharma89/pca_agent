@@ -157,6 +157,22 @@ This document contains best practices, strategies, and insights for YouTube mark
 - Reporting best practices
 - Growth strategies
 
+#### Google Developers - YouTube Analytics API
+**Source**: https://developers.google.com/youtube/analytics  
+**Key Topics**:
+- API architecture, quota management, and OAuth workflows
+- Query explorer for rapid prototype of dimensions/metrics
+- Sample scripts (Python/JavaScript) for automated reporting
+- Guidance on connecting Analytics API with Data Studio/Looker dashboards
+
+#### Google Developers - YouTube Analytics Metrics Reference
+**Source**: https://developers.google.com/youtube/analytics/metrics  
+**Key Topics**:
+- Exhaustive metric definitions (views, estimated revenue, playback metrics, ad performance)
+- Dimension/metric compatibility matrix
+- Availability by content type (videos, playlists, channels)
+- 2024 GA4-aligned metrics and deprecated fields
+
 #### SearchEngineJournal - YouTube Marketing Strategies
 **Source**: https://www.searchenginejournal.com/youtube-marketing-strategies/481139/
 **Key Topics**:

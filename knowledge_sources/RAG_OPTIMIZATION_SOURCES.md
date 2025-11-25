@@ -120,6 +120,14 @@ Retrieval-Augmented Generation (RAG) is an AI framework that combines informatio
 - Debugging strategies
 - Production considerations
 
+#### GraphRAG Survey (arXiv 2408.08921)
+**Source**: https://arxiv.org/abs/2408.08921  
+**Key Topics**:
+- Formalized GraphRAG workflow: graph-based indexing, graph-guided retrieval, graph-enhanced generation
+- Taxonomy of structural retrieval techniques (path reasoning, neighborhood expansion, graph pruning)
+- Industrial use cases combining knowledge graphs with LLMs
+- Open research challenges and future roadmap for graph-aware RAG systems
+
 ### Priority 2 (P2) RAG Resources
 
 #### Raga AI - RAG Prompt Engineering
@@ -680,6 +688,7 @@ Answer:
 5. **Explainable RAG**: Better transparency
 6. **Efficient RAG**: Lower cost and latency
 7. **Agentic RAG**: More autonomous systems
+8. **Graph-Augmented RAG**: Leveraging knowledge graphs for structured reasoning
 
 ### Research Directions
 - Better retrieval algorithms

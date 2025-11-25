@@ -113,6 +113,22 @@ This document contains best practices, optimization strategies, and advanced tec
 - Privacy-first advertising
 - Performance Max optimization
 
+#### Analyzify - Optimize Google Ads Data (PDF)
+**Source**: https://analyzify.com/hub/optimize-google-ads-data-pdf  
+**Key Topics**:
+- GA4 + Google Ads integration blueprint (Enhanced Conversions, server-side tagging)
+- Data Layer governance and consent mode implementation
+- Diagnostic checklist for conversion lag, mismatched attribution, and tagging gaps
+- Reporting templates for funnel, attribution, and LTV cohorts
+
+#### Slideshare - Ultimate Google Ads Beginner’s Guide (2024)
+**Source**: https://www.slideshare.net/slideshow/the-ultimate-google-ads-beginners-guidepdf/252030205  
+**Key Topics**:
+- Foundational campaign setup workflow (structure → targeting → bidding)
+- Visual walkthrough of Google Ads UI and automation levers
+- Troubleshooting guide for disapproved ads, low impressions, and budget pacing
+- Glossary of core Google Ads terminology for onboarding teams
+
 ---
 
 ## Display & Video 360 (DV360) Optimization
