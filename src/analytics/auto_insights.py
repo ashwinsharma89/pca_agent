@@ -1649,26 +1649,63 @@ Platform Performance (Multi-KPI View):
     # These methods are isolated and do NOT affect existing functionality
     
     def _initialize_rag_engine(self):
-        """Lazy initialization of RAG engine (only when needed)."""
+        """Lazy initialization of RAG engine (only when needed).
+        
+        Uses existing knowledge base from data/knowledge_base.json if available.
+        Builds vector store on first use if not already built.
+        """
         if hasattr(self, '_rag_engine') and self._rag_engine is not None:
             return self._rag_engine
         
         try:
-            from ..knowledge.enhanced_reasoning import EnhancedReasoningEngine
-            from ..knowledge.vector_store import VectorStoreConfig
+            from ..knowledge.vector_store import VectorStoreConfig, VectorStoreBuilder, VectorRetriever, HybridRetriever
+            from pathlib import Path
+            import json
             
-            # Initialize RAG engine with same LLM as main system
-            self._rag_engine = EnhancedReasoningEngine(
-                api_key=self.anthropic_api_key if self.use_anthropic else self.openai_api_key,
-                use_anthropic=self.use_anthropic,
-                enable_hybrid=True
-            )
+            # Check if vector store exists, if not build it from existing knowledge base
+            config = VectorStoreConfig()
             
-            logger.info("RAG engine initialized successfully")
+            if not config.index_path.exists() or not config.metadata_path.exists():
+                logger.info("Vector store not found. Building from existing knowledge base...")
+                
+                # Load existing knowledge base
+                kb_path = Path("data/knowledge_base.json")
+                if kb_path.exists():
+                    with open(kb_path, 'r', encoding='utf-8') as f:
+                        documents = json.load(f)
+                    
+                    logger.info(f"Loaded {len(documents)} documents from knowledge base")
+                    
+                    # Build vector store
+                    builder = VectorStoreBuilder(
+                        config=config,
+                        client=self.client if not self.use_anthropic else None
+                    )
+                    builder.build_from_documents(documents)
+                    logger.info("Vector store built successfully")
+                else:
+                    logger.warning(f"Knowledge base not found at {kb_path}")
+                    self._rag_engine = None
+                    return None
+            
+            # Initialize retrievers
+            vector_retriever = VectorRetriever(config=config)
+            hybrid_retriever = HybridRetriever(config=config, use_keyword=True, use_rerank=False)
+            
+            # Create a simple RAG engine wrapper
+            class SimpleRAGEngine:
+                def __init__(self, vector_retriever, hybrid_retriever):
+                    self.vector_retriever = vector_retriever
+                    self.hybrid_retriever = hybrid_retriever
+            
+            self._rag_engine = SimpleRAGEngine(vector_retriever, hybrid_retriever)
+            logger.info("RAG engine initialized successfully with existing knowledge base")
             return self._rag_engine
             
         except Exception as e:
             logger.warning(f"Failed to initialize RAG engine: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             self._rag_engine = None
             return None
     
@@ -1717,11 +1754,11 @@ Platform Performance (Multi-KPI View):
             
             logger.info(f"RAG retrieval query: {retrieval_query}")
             
-            # Retrieve relevant knowledge
+            # Retrieve relevant knowledge using hybrid retriever (vector + keyword)
             if hasattr(rag_engine, 'hybrid_retriever') and rag_engine.hybrid_retriever:
-                results = rag_engine.hybrid_retriever.retrieve(retrieval_query, top_k=top_k)
+                results = rag_engine.hybrid_retriever.search(retrieval_query, top_k=top_k)
             elif hasattr(rag_engine, 'vector_retriever') and rag_engine.vector_retriever:
-                results = rag_engine.vector_retriever.retrieve(retrieval_query, top_k=top_k)
+                results = rag_engine.vector_retriever.search(retrieval_query, top_k=top_k)
             else:
                 logger.warning("No retriever available in RAG engine")
                 return []
@@ -1730,8 +1767,8 @@ Platform Performance (Multi-KPI View):
             knowledge_chunks = []
             for result in results:
                 knowledge_chunks.append({
-                    'content': result.get('content', ''),
-                    'source': result.get('metadata', {}).get('source', 'unknown'),
+                    'content': result.get('text', ''),
+                    'source': result.get('metadata', {}).get('title', 'unknown'),
                     'score': result.get('score', 0.0)
                 })
             
