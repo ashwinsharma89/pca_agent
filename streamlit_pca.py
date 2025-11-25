@@ -575,6 +575,10 @@ def _strip_light_markup(text: str) -> str:
     # Add space between uppercase and lowercase when followed by uppercase (e.g., "CPAat" -> "CPA at")
     text = re.sub(r'([A-Z]{2,})([a-z])', r'\1 \2', text)
     
+    # Fix formatting issues with lines starting with numbers (e.g., "1.Platform" -> "1. Platform")
+    text = re.sub(r'^(\d+)\.([A-Z])', r'\1. \2', text, flags=re.MULTILINE)
+    text = re.sub(r'\n(\d+)\.([A-Z])', r'\n\1. \2', text)
+    
     return text
 
 
@@ -2120,113 +2124,137 @@ with tab_auto:
                     "Conversion": "#10b981"      # Green - Bottom of funnel
                 }
 
+                # Map funnel stage values to standard names (case-insensitive)
+                def normalize_funnel_stage(stage):
+                    stage_str = str(stage).strip().lower()
+                    if any(x in stage_str for x in ['aware', 'top', 'impression', 'reach']):
+                        return 'Awareness'
+                    elif any(x in stage_str for x in ['consider', 'middle', 'interest', 'engagement']):
+                        return 'Consideration'
+                    elif any(x in stage_str for x in ['convert', 'bottom', 'action', 'purchase', 'lead']):
+                        return 'Conversion'
+                    return stage  # Keep original if no match
+                
+                stage_monthly['Normalized_Stage'] = stage_monthly[funnel_stage_col].apply(normalize_funnel_stage)
+                
                 # Filter data to only include the three main funnel stages
-                stage_monthly = stage_monthly[stage_monthly[funnel_stage_col].isin(stage_order)]
+                stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
+                
+                # Use normalized stage for grouping
+                funnel_stage_col_original = funnel_stage_col
+                funnel_stage_col = 'Normalized_Stage'
 
-                # Add traces for each funnel stage
-                for stage in stage_order:
-                    stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
-                    if stage_subset.empty:
-                        continue
-                    
-                    color = color_map[stage]
-                    emoji = stage_emojis[stage]
-                    
-                    # Primary metric: CTR (solid line with markers)
-                    fig.add_trace(
-                        go.Scatter(
-                            x=stage_subset['Month_Year'],
-                            y=stage_subset['CTR'],
-                            name=f"{emoji} {stage} - CTR",
-                            mode='lines+markers',
-                            line=dict(color=color, width=3.5),
-                            marker=dict(size=10, symbol='circle'),
-                            legendgroup=stage,
-                            hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                # Check if we have any data after normalization
+                if stage_monthly.empty:
+                    st.warning(f"⚠️ No data matched the standard funnel stages after normalization. Original stages found: {', '.join(map(str, unique_funnels))}")
+                else:
+                    # Add traces for each funnel stage
+                    for stage in stage_order:
+                        stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                        if stage_subset.empty:
+                            continue
+                        
+                        color = color_map[stage]
+                        emoji = stage_emojis[stage]
+                        
+                        # Primary metric: CTR (solid line with markers)
+                        fig.add_trace(
+                            go.Scatter(
+                                x=stage_subset['Month_Year'],
+                                y=stage_subset['CTR'],
+                                name=f"{emoji} {stage} - CTR",
+                                mode='lines+markers',
+                                line=dict(color=color, width=3.5),
+                                marker=dict(size=10, symbol='circle'),
+                                legendgroup=stage,
+                                hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                            ),
+                            secondary_y=False
+                        )
+                        
+                        # Secondary metric: Conversions (dashed line)
+                        fig.add_trace(
+                            go.Scatter(
+                                x=stage_subset['Month_Year'],
+                                y=stage_subset['Conversions'],
+                                name=f"{emoji} {stage} - Conversions",
+                                mode='lines+markers',
+                                line=dict(color=color, width=2.5, dash='dot'),
+                                marker=dict(size=8, symbol='diamond'),
+                                legendgroup=stage,
+                                hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
+                            ),
+                            secondary_y=True
+                        )
+
+                    # Update layout with clear funnel stage indicators
+                    fig.update_layout(
+                        title={
+                            'text': '🔄 Funnel Performance: Awareness → Consideration → Conversion',
+                            'x': 0.5,
+                            'xanchor': 'center',
+                            'font': {'size': 16, 'color': '#e2e8f0'}
+                        },
+                        xaxis_title='Month',
+                        hovermode='x unified',
+                        height=450,
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.02,
+                            bgcolor='rgba(30, 41, 59, 0.8)',
+                            bordercolor='rgba(148, 163, 184, 0.3)',
+                            borderwidth=1
                         ),
-                        secondary_y=False
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
                     )
                     
-                    # Secondary metric: Conversions (dashed line)
-                    fig.add_trace(
-                        go.Scatter(
-                            x=stage_subset['Month_Year'],
-                            y=stage_subset['Conversions'],
-                            name=f"{emoji} {stage} - Conversions",
-                            mode='lines+markers',
-                            line=dict(color=color, width=2.5, dash='dot'),
-                            marker=dict(size=8, symbol='diamond'),
-                            legendgroup=stage,
-                            hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
-                        ),
-                        secondary_y=True
+                    # Update axes with clear labels
+                    fig.update_yaxes(
+                        title_text='<b>CTR (%)</b>', 
+                        secondary_y=False,
+                        showgrid=True,
+                        gridcolor='rgba(128,128,128,0.2)'
+                    )
+                    fig.update_yaxes(
+                        title_text='<b>Conversions</b>', 
+                        secondary_y=True,
+                        showgrid=False
+                    )
+                    fig.update_xaxes(
+                        showgrid=True,
+                        gridcolor='rgba(128,128,128,0.2)'
                     )
 
-                # Update layout with clear funnel stage indicators
-                fig.update_layout(
-                    title={
-                        'text': '🔄 Funnel Performance: Awareness → Consideration → Conversion',
-                        'x': 0.5,
-                        'xanchor': 'center',
-                        'font': {'size': 16, 'color': '#e2e8f0'}
-                    },
-                    xaxis_title='Month',
-                    hovermode='x unified',
-                    height=450,
-                    legend=dict(
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        xanchor="left",
-                        x=1.02,
-                        bgcolor='rgba(30, 41, 59, 0.8)',
-                        bordercolor='rgba(148, 163, 184, 0.3)',
-                        borderwidth=1
-                    ),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                )
-                
-                # Update axes with clear labels
-                fig.update_yaxes(
-                    title_text='<b>CTR (%)</b>', 
-                    secondary_y=False,
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.2)'
-                )
-                fig.update_yaxes(
-                    title_text='<b>Conversions</b>', 
-                    secondary_y=True,
-                    showgrid=False
-                )
-                fig.update_xaxes(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.2)'
-                )
-
-                # Add summary metrics for each funnel stage BEFORE chart
-                st.markdown("#### 📊 Funnel Stage Summary")
-                funnel_cols = st.columns(3)
-                
-                for idx, stage in enumerate(stage_order):
-                    stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
-                    if not stage_data.empty:
-                        with funnel_cols[idx]:
-                            emoji = stage_emojis[stage]
-                            avg_ctr = stage_data['CTR'].mean()
-                            total_conv = stage_data['Conversions'].sum()
-                            
-                            st.markdown(f"**{emoji} {stage}**")
-                            st.metric("Avg CTR", f"{avg_ctr:.2f}%" if not pd.isna(avg_ctr) else "N/A")
-                            st.metric("Total Conversions", f"{total_conv:,.0f}" if not pd.isna(total_conv) else "N/A")
-                            
-                            if 'CPA' in stage_data.columns:
-                                avg_cpa = stage_data['CPA'].mean()
-                                if not pd.isna(avg_cpa):
-                                    st.metric("Avg CPA", f"${avg_cpa:.2f}")
-                
-                # Show the chart
-                st.plotly_chart(fig, width="stretch")
+                    # Add summary metrics for each funnel stage BEFORE chart
+                    st.markdown("#### 📊 Funnel Stage Summary")
+                    funnel_cols = st.columns(3)
+                    
+                    for idx, stage in enumerate(stage_order):
+                        stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                        if not stage_data.empty:
+                            with funnel_cols[idx]:
+                                emoji = stage_emojis[stage]
+                                avg_ctr = stage_data['CTR'].mean()
+                                total_conv = stage_data['Conversions'].sum()
+                                
+                                st.markdown(f"**{emoji} {stage}**")
+                                st.metric("Avg CTR", f"{avg_ctr:.2f}%" if not pd.isna(avg_ctr) else "N/A")
+                                st.metric("Total Conversions", f"{total_conv:,.0f}" if not pd.isna(total_conv) else "N/A")
+                                
+                                if 'CPA' in stage_data.columns:
+                                    avg_cpa = stage_data['CPA'].mean()
+                                    if not pd.isna(avg_cpa):
+                                        st.metric("Avg CPA", f"${avg_cpa:.2f}")
+                    
+                    # Show the chart only if we have traces
+                    if len(fig.data) > 0:
+                        st.plotly_chart(fig, width="stretch")
+                    else:
+                        st.warning("⚠️ No funnel data to display after filtering.")
             else:
                 # No funnel column detected - show warning
                 st.warning("⚠️ **No Funnel Stage column detected in your data.**\n\n"
