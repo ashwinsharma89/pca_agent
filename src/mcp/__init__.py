@@ -1,0 +1,24 @@
+"""
+MCP (Model Context Protocol) Integration for PCA Agent
+
+Provides:
+- Phase 1: Unified data access layer for all sources
+- Phase 2: MCP tools for LLM to call directly
+- Phase 3: Enhanced RAG with live data integration
+"""
+
+from src.mcp.resource_server import PCAResourceServer, get_mcp_server
+from src.mcp.client import PCAMCPClient, connect_mcp, read_campaign_data
+from src.mcp.tools import PCATools
+from src.mcp.rag_integration import MCPEnhancedRAG, create_enhanced_rag
+
+__all__ = [
+    "PCAResourceServer",
+    "get_mcp_server",
+    "PCAMCPClient",
+    "connect_mcp",
+    "read_campaign_data",
+    "PCATools",
+    "MCPEnhancedRAG",
+    "create_enhanced_rag",
+]
