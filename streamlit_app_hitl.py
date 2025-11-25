@@ -993,36 +993,188 @@ with tab_auto:
             
             st.markdown("### 🗄️ Connect to Database")
             
-            # Database type selection
-            db_type = st.selectbox(
-                "Database Type",
-                options=["postgresql", "mysql", "sqlite", "mssql"],
-                format_func=lambda x: {
+            # Database type selection with categories
+            db_category = st.radio(
+                "Database Category",
+                options=["Traditional Databases", "Cloud Data Warehouses", "Cloud Storage"],
+                horizontal=True
+            )
+            
+            if db_category == "Traditional Databases":
+                db_options = {
                     "postgresql": "PostgreSQL",
                     "mysql": "MySQL",
                     "sqlite": "SQLite",
                     "mssql": "SQL Server"
-                }.get(x, x)
+                }
+            elif db_category == "Cloud Data Warehouses":
+                db_options = {
+                    "duckdb": "DuckDB",
+                    "snowflake": "Snowflake",
+                    "bigquery": "Google BigQuery",
+                    "redshift": "AWS Redshift",
+                    "databricks": "Databricks"
+                }
+            else:  # Cloud Storage
+                db_options = {
+                    "s3": "AWS S3",
+                    "azure_blob": "Azure Blob Storage",
+                    "gcs": "Google Cloud Storage"
+                }
+            
+            db_type = st.selectbox(
+                "Select Database/Storage",
+                options=list(db_options.keys()),
+                format_func=lambda x: db_options.get(x, x)
             )
             
             # Connection parameters based on database type
-            if db_type == "sqlite":
-                file_path = st.text_input("Database File Path", placeholder="path/to/database.db")
+            if db_type in ["sqlite", "duckdb"]:
+                file_path = st.text_input("Database File Path", placeholder="path/to/database.db" if db_type == "sqlite" else ":memory: or path/to/database.duckdb")
                 
-                if st.button("🔌 Connect to SQLite"):
-                    if file_path:
+                if st.button(f"🔌 Connect to {db_type.upper()}"):
+                    if file_path or db_type == "duckdb":
                         try:
                             with st.spinner("Connecting to database..."):
                                 connector = DatabaseConnector()
-                                connector.connect(db_type="sqlite", file_path=file_path)
+                                connector.connect(db_type=db_type, file_path=file_path or ":memory:")
                                 st.session_state.db_connector = connector
                                 st.session_state.db_connected = True
-                                st.success("✅ Connected to SQLite database!")
+                                st.success(f"✅ Connected to {db_type.upper()} database!")
                                 st.rerun()
                         except Exception as e:
                             st.error(f"❌ Connection failed: {str(e)}")
                     else:
                         st.warning("Please provide database file path")
+            
+            elif db_type == "snowflake":
+                col1, col2 = st.columns(2)
+                with col1:
+                    account = st.text_input("Account", placeholder="xy12345.us-east-1")
+                    database = st.text_input("Database", placeholder="CAMPAIGN_DB")
+                    warehouse = st.text_input("Warehouse", placeholder="COMPUTE_WH")
+                with col2:
+                    username = st.text_input("Username", placeholder="user")
+                    password = st.text_input("Password", type="password")
+                    schema = st.text_input("Schema", value="PUBLIC")
+                
+                if st.button("🔌 Connect to Snowflake"):
+                    if all([account, database, username, password, warehouse]):
+                        try:
+                            with st.spinner("Connecting to Snowflake..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="snowflake",
+                                    host=None,
+                                    database=database,
+                                    username=username,
+                                    password=password,
+                                    account=account,
+                                    warehouse=warehouse,
+                                    schema=schema
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Snowflake!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all required fields")
+            
+            elif db_type == "bigquery":
+                project_id = st.text_input("Project ID", placeholder="my-project-123")
+                credentials_path = st.text_input("Credentials JSON Path (optional)", placeholder="path/to/credentials.json")
+                
+                if st.button("🔌 Connect to BigQuery"):
+                    if project_id:
+                        try:
+                            with st.spinner("Connecting to BigQuery..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="bigquery",
+                                    database=project_id,
+                                    project_id=project_id,
+                                    credentials_path=credentials_path if credentials_path else None
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to BigQuery!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please provide Project ID")
+            
+            elif db_type == "databricks":
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="dbc-xyz.cloud.databricks.com")
+                    http_path = st.text_input("HTTP Path", placeholder="/sql/1.0/warehouses/abc123")
+                with col2:
+                    token = st.text_input("Access Token", type="password")
+                    catalog = st.text_input("Catalog", value="main")
+                
+                if st.button("🔌 Connect to Databricks"):
+                    if all([host, http_path, token, catalog]):
+                        try:
+                            with st.spinner("Connecting to Databricks..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="databricks",
+                                    host=host,
+                                    database=catalog,
+                                    password=token,
+                                    http_path=http_path,
+                                    token=token
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Databricks!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all required fields")
+            
+            elif db_type in ["s3", "azure_blob", "gcs"]:
+                # Cloud storage - handle differently (no connection, direct file load)
+                st.info("Cloud storage requires direct file path. Enter details below to load data.")
+                st.session_state.db_type = db_type
+                st.session_state.db_connected = True  # Mark as "connected" to show file selection
+            
+            elif db_type == "redshift":
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="cluster.region.redshift.amazonaws.com")
+                    database = st.text_input("Database", placeholder="dev")
+                with col2:
+                    port = st.number_input("Port", value=5439, min_value=1, max_value=65535)
+                    username = st.text_input("Username", placeholder="admin")
+                
+                password = st.text_input("Password", type="password")
+                
+                if st.button("🔌 Connect to Redshift"):
+                    if all([host, database, username, password]):
+                        try:
+                            with st.spinner("Connecting to Redshift..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="redshift",
+                                    host=host,
+                                    port=port,
+                                    database=database,
+                                    username=username,
+                                    password=password
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Redshift!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all connection fields")
             
             else:
                 # Server-based databases
@@ -1070,69 +1222,93 @@ with tab_auto:
                 st.markdown("---")
                 st.markdown("### 📊 Select Data")
                 
-                connector = st.session_state.db_connector
-                
-                # Get tables
-                try:
-                    tables = connector.get_tables()
+                # Handle cloud storage differently
+                if st.session_state.get('db_type') in ["s3", "azure_blob", "gcs"]:
+                    storage_type = st.session_state.get('db_type')
+                    connector = DatabaseConnector()
                     
-                    data_source = st.radio(
-                        "Data Source",
-                        options=["📋 Select Table", "✍️ Custom Query"],
-                        horizontal=True
-                    )
-                    
-                    if data_source == "📋 Select Table":
-                        selected_table = st.selectbox("Select Table", options=tables)
+                    if storage_type == "s3":
+                        s3_path = st.text_input("S3 Path", placeholder="s3://bucket-name/path/to/file.csv")
+                        aws_access_key = st.text_input("AWS Access Key (optional)")
+                        aws_secret_key = st.text_input("AWS Secret Key (optional)", type="password")
+                        region = st.text_input("Region", value="us-east-1")
                         
-                        # Show schema
-                        if st.checkbox("Show Table Schema"):
-                            schema = connector.get_table_schema(selected_table)
-                            st.dataframe(schema, use_container_width=True)
-                        
-                        # Row limit
-                        limit = st.number_input("Row Limit (0 = all rows)", min_value=0, value=10000, step=1000)
-                        
-                        if st.button("📥 Load Data from Table"):
-                            try:
-                                with st.spinner(f"Loading data from {selected_table}..."):
-                                    if limit > 0:
-                                        df = connector.load_table(selected_table, limit=limit)
-                                    else:
-                                        df = connector.load_table(selected_table)
-                                    
-                                    # Normalize column names
-                                    df = normalize_campaign_dataframe(df)
-                                    st.session_state.df = df
-                                    
-                                    st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Failed to load data: {str(e)}")
-                    
-                    else:  # Custom Query
-                        query = st.text_area(
-                            "SQL Query",
-                            placeholder="SELECT * FROM campaigns WHERE date >= '2024-01-01'",
-                            height=150
-                        )
-                        
-                        if st.button("▶️ Execute Query"):
-                            if query.strip():
+                        if st.button("📥 Load from S3"):
+                            if s3_path:
                                 try:
-                                    with st.spinner("Executing query..."):
-                                        df = connector.execute_query(query)
-                                        
-                                        # Normalize column names
+                                    with st.spinner("Loading from S3..."):
+                                        df = connector.load_from_s3(
+                                            s3_path=s3_path,
+                                            aws_access_key_id=aws_access_key if aws_access_key else None,
+                                            aws_secret_access_key=aws_secret_key if aws_secret_key else None,
+                                            region_name=region
+                                        )
                                         df = normalize_campaign_dataframe(df)
                                         st.session_state.df = df
-                                        
-                                        st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                        st.success(f"✅ Loaded {len(df)} rows from S3")
                                         st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Query failed: {str(e)}")
+                                    st.error(f"❌ Failed to load from S3: {str(e)}")
                             else:
-                                st.warning("Please enter a SQL query")
+                                st.warning("Please provide S3 path")
+                    
+                    elif storage_type == "azure_blob":
+                        container = st.text_input("Container Name", placeholder="my-container")
+                        blob_name = st.text_input("Blob Name", placeholder="path/to/file.csv")
+                        
+                        auth_method = st.radio("Authentication", ["Connection String", "Account Key"])
+                        
+                        if auth_method == "Connection String":
+                            conn_str = st.text_input("Connection String", type="password")
+                            account_name = None
+                            account_key = None
+                        else:
+                            conn_str = None
+                            account_name = st.text_input("Account Name")
+                            account_key = st.text_input("Account Key", type="password")
+                        
+                        if st.button("📥 Load from Azure"):
+                            if container and blob_name:
+                                try:
+                                    with st.spinner("Loading from Azure..."):
+                                        df = connector.load_from_azure_blob(
+                                            container_name=container,
+                                            blob_name=blob_name,
+                                            connection_string=conn_str,
+                                            account_name=account_name,
+                                            account_key=account_key
+                                        )
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        st.success(f"✅ Loaded {len(df)} rows from Azure")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load from Azure: {str(e)}")
+                            else:
+                                st.warning("Please provide container and blob name")
+                    
+                    elif storage_type == "gcs":
+                        bucket_name = st.text_input("Bucket Name", placeholder="my-bucket")
+                        blob_name = st.text_input("Blob Name", placeholder="path/to/file.csv")
+                        credentials_path = st.text_input("Credentials JSON Path (optional)", placeholder="path/to/credentials.json")
+                        
+                        if st.button("📥 Load from GCS"):
+                            if bucket_name and blob_name:
+                                try:
+                                    with st.spinner("Loading from GCS..."):
+                                        df = connector.load_from_gcs(
+                                            bucket_name=bucket_name,
+                                            blob_name=blob_name,
+                                            credentials_path=credentials_path if credentials_path else None
+                                        )
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        st.success(f"✅ Loaded {len(df)} rows from GCS")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load from GCS: {str(e)}")
+                            else:
+                                st.warning("Please provide bucket and blob name")
                     
                     # Show loaded data preview
                     if 'df' in st.session_state and st.session_state.df is not None:
@@ -1151,7 +1327,7 @@ with tab_auto:
                             col_d.metric("Total Spend", f"${total_spend:,.0f}")
                         
                         st.markdown("---")
-                        if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
+                        if st.button("🚀 Analyze Data & Generate Insights", type="primary", key="analyze_cloud"):
                             with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
                                 expert = MediaAnalyticsExpert()
                                 analysis = expert.analyze_all(df)
@@ -1159,12 +1335,103 @@ with tab_auto:
                                 st.session_state.analysis_complete = True
                                 st.rerun()
                 
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                    if st.button("🔌 Reconnect"):
-                        st.session_state.db_connected = False
-                        st.session_state.db_connector = None
-                        st.rerun()
+                else:
+                    # Database connection (not cloud storage)
+                    connector = st.session_state.db_connector
+                    
+                    # Get tables
+                    try:
+                        tables = connector.get_tables()
+                        
+                        data_source = st.radio(
+                            "Data Source",
+                            options=["📋 Select Table", "✍️ Custom Query"],
+                            horizontal=True
+                        )
+                        
+                        if data_source == "📋 Select Table":
+                            selected_table = st.selectbox("Select Table", options=tables)
+                            
+                            # Show schema
+                            if st.checkbox("Show Table Schema"):
+                                schema = connector.get_table_schema(selected_table)
+                                st.dataframe(schema, use_container_width=True)
+                            
+                            # Row limit
+                            limit = st.number_input("Row Limit (0 = all rows)", min_value=0, value=10000, step=1000)
+                            
+                            if st.button("📥 Load Data from Table"):
+                                try:
+                                    with st.spinner(f"Loading data from {selected_table}..."):
+                                        if limit > 0:
+                                            df = connector.load_table(selected_table, limit=limit)
+                                        else:
+                                            df = connector.load_table(selected_table)
+                                        
+                                        # Normalize column names
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        
+                                        st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load data: {str(e)}")
+                        
+                        else:  # Custom Query
+                            query = st.text_area(
+                                "SQL Query",
+                                placeholder="SELECT * FROM campaigns WHERE date >= '2024-01-01'",
+                                height=150
+                            )
+                            
+                            if st.button("▶️ Execute Query"):
+                                if query.strip():
+                                    try:
+                                        with st.spinner("Executing query..."):
+                                            df = connector.execute_query(query)
+                                            
+                                            # Normalize column names
+                                            df = normalize_campaign_dataframe(df)
+                                            st.session_state.df = df
+                                            
+                                            st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                            st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Query failed: {str(e)}")
+                                else:
+                                    st.warning("Please enter a SQL query")
+                        
+                        # Show loaded data preview
+                        if 'df' in st.session_state and st.session_state.df is not None:
+                            df = st.session_state.df
+                            st.markdown("---")
+                            st.markdown("### 📊 Data Preview")
+                            st.dataframe(df.head(10), use_container_width=True)
+                            
+                            # Show metrics
+                            col_a, col_b, col_c, col_d = st.columns(4)
+                            col_a.metric("Rows", f"{len(df):,}")
+                            col_b.metric("Columns", len(df.columns))
+                            
+                            if "Spend" in df.columns:
+                                total_spend = df["Spend"].sum()
+                                col_d.metric("Total Spend", f"${total_spend:,.0f}")
+                            
+                            st.markdown("---")
+                            if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
+                                with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                                    expert = MediaAnalyticsExpert()
+                                    analysis = expert.analyze_all(df)
+                                    st.session_state.analysis_data = analysis
+                                    st.session_state.analysis_complete = True
+                                    st.rerun()
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+                        if st.button("🔌 Reconnect"):
+                            st.session_state.db_connected = False
+                            st.session_state.db_connector = None
+                            st.rerun()
 
         else:
             st.warning(
