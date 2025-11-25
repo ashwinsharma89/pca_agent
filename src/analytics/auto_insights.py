@@ -208,8 +208,15 @@ class MediaAnalyticsExpert:
             key_parts: List[Any] = []
             for field in key_fields:
                 value = entry.get(field)
+                # Convert unhashable types to hashable equivalents
                 if isinstance(value, list):
                     key_parts.append(tuple(value))
+                elif isinstance(value, (pd.Series, pd.DataFrame)):
+                    # Convert pandas objects to string representation
+                    key_parts.append(str(value))
+                elif isinstance(value, dict):
+                    # Convert dict to sorted tuple of items
+                    key_parts.append(tuple(sorted(value.items())))
                 else:
                     key_parts.append(value)
             key = tuple(key_parts)
