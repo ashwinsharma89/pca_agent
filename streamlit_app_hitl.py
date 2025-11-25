@@ -1084,6 +1084,7 @@ with tab_auto:
         rag_brief_summary = None
         rag_detailed_summary = None
         rag_metadata = None
+        campaign_id = st.session_state.get('selected_campaign', 'all_campaigns')
         
         if enable_rag_comparison and brief_summary:
             try:
@@ -1111,7 +1112,6 @@ with tab_auto:
                         
                         # Log comparison
                         session_id = st.session_state.get('session_id', str(uuid.uuid4())[:8])
-                        campaign_id = selected_campaign if selected_campaign != "All Campaigns" else "all_campaigns"
                         
                         comparison_logger = ComparisonLogger()
                         comparison_logger.log_comparison(
