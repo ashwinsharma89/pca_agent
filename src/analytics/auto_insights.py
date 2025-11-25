@@ -1644,3 +1644,331 @@ Platform Performance (Multi-KPI View):
         }
         
         return tactics.get(platform, ["Platform-specific tactics not available"])
+    
+    # ==================== RAG-ENHANCED METHODS (EXPERIMENTAL) ====================
+    # These methods are isolated and do NOT affect existing functionality
+    
+    def _initialize_rag_engine(self):
+        """Lazy initialization of RAG engine (only when needed)."""
+        if hasattr(self, '_rag_engine') and self._rag_engine is not None:
+            return self._rag_engine
+        
+        try:
+            from ..knowledge.enhanced_reasoning import EnhancedReasoningEngine
+            from ..knowledge.vector_store import VectorStoreConfig
+            
+            # Initialize RAG engine with same LLM as main system
+            self._rag_engine = EnhancedReasoningEngine(
+                api_key=self.anthropic_api_key if self.use_anthropic else self.openai_api_key,
+                use_anthropic=self.use_anthropic,
+                enable_hybrid=True
+            )
+            
+            logger.info("RAG engine initialized successfully")
+            return self._rag_engine
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize RAG engine: {e}")
+            self._rag_engine = None
+            return None
+    
+    def _retrieve_rag_context(self, metrics: Dict, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Retrieve relevant knowledge from RAG system.
+        
+        Args:
+            metrics: Campaign metrics dictionary
+            top_k: Number of top knowledge chunks to retrieve
+            
+        Returns:
+            List of relevant knowledge chunks with metadata
+        """
+        rag_engine = self._initialize_rag_engine()
+        if rag_engine is None:
+            logger.warning("RAG engine not available, returning empty context")
+            return []
+        
+        try:
+            # Build retrieval query from metrics
+            overview = metrics.get('overview', {})
+            platform_metrics = metrics.get('by_platform', {})
+            
+            # Construct query based on key metrics
+            query_parts = []
+            
+            # Add performance context
+            if overview.get('avg_roas'):
+                query_parts.append(f"ROAS {overview['avg_roas']:.2f}x")
+            if overview.get('avg_cpa'):
+                query_parts.append(f"CPA ${overview['avg_cpa']:.2f}")
+            if overview.get('avg_ctr'):
+                query_parts.append(f"CTR {overview['avg_ctr']:.2f}%")
+            
+            # Add platform context
+            if platform_metrics:
+                platforms = list(platform_metrics.keys())[:3]
+                query_parts.append(f"platforms: {', '.join(platforms)}")
+            
+            # Build retrieval query
+            retrieval_query = (
+                f"Digital marketing campaign optimization strategies for "
+                f"{' '.join(query_parts)}. "
+                f"Industry benchmarks, best practices, and tactical recommendations."
+            )
+            
+            logger.info(f"RAG retrieval query: {retrieval_query}")
+            
+            # Retrieve relevant knowledge
+            if hasattr(rag_engine, 'hybrid_retriever') and rag_engine.hybrid_retriever:
+                results = rag_engine.hybrid_retriever.retrieve(retrieval_query, top_k=top_k)
+            elif hasattr(rag_engine, 'vector_retriever') and rag_engine.vector_retriever:
+                results = rag_engine.vector_retriever.retrieve(retrieval_query, top_k=top_k)
+            else:
+                logger.warning("No retriever available in RAG engine")
+                return []
+            
+            # Format results
+            knowledge_chunks = []
+            for result in results:
+                knowledge_chunks.append({
+                    'content': result.get('content', ''),
+                    'source': result.get('metadata', {}).get('source', 'unknown'),
+                    'score': result.get('score', 0.0)
+                })
+            
+            logger.info(f"Retrieved {len(knowledge_chunks)} knowledge chunks from RAG")
+            return knowledge_chunks
+            
+        except Exception as e:
+            logger.error(f"Error retrieving RAG context: {e}")
+            return []
+    
+    def _build_rag_augmented_prompt(self, 
+                                   metrics: Dict, 
+                                   insights: List, 
+                                   recommendations: List,
+                                   rag_context: List[Dict[str, Any]]) -> str:
+        """Build prompt augmented with RAG-retrieved knowledge.
+        
+        Args:
+            metrics: Campaign metrics
+            insights: Generated insights
+            recommendations: Generated recommendations
+            rag_context: Retrieved knowledge chunks
+            
+        Returns:
+            RAG-augmented prompt string
+        """
+        # Build knowledge context section
+        knowledge_section = ""
+        if rag_context:
+            knowledge_section = "\n\n## EXTERNAL KNOWLEDGE & BENCHMARKS\n\n"
+            for idx, chunk in enumerate(rag_context, 1):
+                source = chunk.get('source', 'unknown')
+                content = chunk.get('content', '')
+                knowledge_section += f"### Source {idx}: {source}\n{content}\n\n"
+        
+        # Get base summary data (same as standard method)
+        summary_data = self._prepare_summary_data(metrics, insights, recommendations)
+        
+        # Build RAG-augmented prompt
+        prompt = f"""You are an expert digital marketing analyst with access to industry benchmarks and best practices.
+
+{knowledge_section}
+
+## CAMPAIGN DATA
+
+{json.dumps(summary_data, indent=2)}
+
+## INSTRUCTIONS
+
+Generate a comprehensive executive summary that:
+
+1. **Benchmarking**: Compare metrics against industry standards from the external knowledge above
+2. **Specific Recommendations**: Provide concrete, actionable tactics based on proven best practices
+3. **Source-Backed Insights**: Reference specific benchmarks and sources when making claims
+4. **Context-Aware**: Use platform-specific strategies from the knowledge base
+
+### BRIEF SUMMARY (3-4 sentences)
+- Start with overall performance vs benchmarks
+- Highlight 1-2 key wins with specific numbers
+- Note 1 critical optimization opportunity
+- End with highest-impact recommendation
+
+### DETAILED SUMMARY (2-3 paragraphs)
+- **Performance Analysis**: Compare all key metrics (ROAS, CPA, CTR) against industry benchmarks
+- **Platform Insights**: Analyze each platform's performance with specific tactics
+- **Optimization Roadmap**: Prioritized action plan with expected impact
+
+**CRITICAL FORMATTING RULES:**
+- NO asterisks, underscores, or markdown formatting
+- Always add space between numbers and text (e.g., "973K revenue" not "973Krevenue")
+- Use clear paragraph breaks
+- Keep it professional and data-driven
+
+Generate the executive summary now:"""
+        
+        return prompt
+    
+    def _prepare_summary_data(self, metrics: Dict, insights: List, recommendations: List) -> Dict:
+        """Prepare summary data dictionary (shared by both standard and RAG methods)."""
+        overview = make_serializable(metrics.get('overview', {}))
+        platform_metrics = metrics.get('by_platform', {})
+        campaign_metrics = metrics.get('by_campaign', {})
+        
+        # Find best and worst performers
+        best_platform = None
+        worst_platform = None
+        if platform_metrics:
+            platforms_with_roas = {
+                p: m.get('roas', 0) 
+                for p, m in platform_metrics.items() 
+                if m.get('roas', 0) > 0
+            }
+            if platforms_with_roas:
+                best_platform = max(platforms_with_roas.items(), key=lambda x: x[1])
+                worst_platform = min(platforms_with_roas.items(), key=lambda x: x[1])
+        
+        summary_data = {
+            'overview': overview,
+            'best_platform': {
+                'name': best_platform[0] if best_platform else 'N/A',
+                'roas': best_platform[1] if best_platform else 0
+            },
+            'worst_platform': {
+                'name': worst_platform[0] if worst_platform else 'N/A',
+                'roas': worst_platform[1] if worst_platform else 0
+            },
+            'top_insights': insights[:5],
+            'top_recommendations': recommendations[:5],
+            'platform_count': len(platform_metrics),
+            'campaign_count': len(campaign_metrics)
+        }
+        
+        return summary_data
+    
+    def _generate_executive_summary_with_rag(self, 
+                                            metrics: Dict, 
+                                            insights: List, 
+                                            recommendations: List) -> Dict[str, str]:
+        """Generate RAG-enhanced executive summary (EXPERIMENTAL - ISOLATED METHOD).
+        
+        This method does NOT affect the existing _generate_executive_summary method.
+        It's a completely separate implementation for A/B testing.
+        
+        Args:
+            metrics: Campaign performance metrics
+            insights: List of generated insights
+            recommendations: List of recommendations
+            
+        Returns:
+            Dictionary with 'brief' and 'detailed' summaries, plus RAG metadata
+        """
+        import time
+        start_time = time.time()
+        
+        logger.info("=== GENERATING RAG-ENHANCED EXECUTIVE SUMMARY ===")
+        
+        try:
+            # Step 1: Retrieve relevant knowledge from RAG
+            logger.info("Step 1: Retrieving RAG context...")
+            rag_context = self._retrieve_rag_context(metrics, top_k=5)
+            
+            # Step 2: Build RAG-augmented prompt
+            logger.info("Step 2: Building RAG-augmented prompt...")
+            rag_prompt = self._build_rag_augmented_prompt(
+                metrics, insights, recommendations, rag_context
+            )
+            
+            # Step 3: Call LLM with RAG-augmented prompt
+            logger.info("Step 3: Calling LLM with RAG context...")
+            
+            # Use same LLM fallback logic as standard method
+            llm_response = None
+            tokens_input = 0
+            tokens_output = 0
+            model_used = "unknown"
+            
+            # Try Claude Sonnet first (if using Anthropic)
+            if self.use_anthropic and self.anthropic_api_key:
+                try:
+                    from ..utils.anthropic_helpers import call_anthropic_http
+                    result = call_anthropic_http(
+                        api_key=self.anthropic_api_key,
+                        model=self.model,
+                        messages=[{"role": "user", "content": rag_prompt}],
+                        max_tokens=4000
+                    )
+                    llm_response = result.get('content', '')
+                    tokens_input = result.get('usage', {}).get('input_tokens', 0)
+                    tokens_output = result.get('usage', {}).get('output_tokens', 0)
+                    model_used = self.model
+                    logger.info(f"RAG summary generated with Claude Sonnet ({tokens_input} + {tokens_output} tokens)")
+                except Exception as e:
+                    logger.warning(f"Claude Sonnet failed for RAG: {e}, trying Gemini...")
+            
+            # Fallback to Gemini
+            if not llm_response and self.gemini_api_key:
+                try:
+                    genai.configure(api_key=self.gemini_api_key)
+                    model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                    response = model.generate_content(rag_prompt)
+                    llm_response = response.text
+                    # Estimate tokens (Gemini doesn't provide exact counts easily)
+                    tokens_input = len(rag_prompt.split()) * 1.3
+                    tokens_output = len(llm_response.split()) * 1.3
+                    model_used = "gemini-2.0-flash-exp"
+                    logger.info(f"RAG summary generated with Gemini (~{int(tokens_input)} + {int(tokens_output)} tokens)")
+                except Exception as e:
+                    logger.warning(f"Gemini failed for RAG: {e}, trying OpenAI...")
+            
+            # Fallback to OpenAI
+            if not llm_response and self.openai_api_key:
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": rag_prompt}],
+                        max_tokens=3000,
+                        temperature=0.7
+                    )
+                    llm_response = response.choices[0].message.content
+                    tokens_input = response.usage.prompt_tokens
+                    tokens_output = response.usage.completion_tokens
+                    model_used = "gpt-4o-mini"
+                    logger.info(f"RAG summary generated with GPT-4o-mini ({tokens_input} + {tokens_output} tokens)")
+                except Exception as e:
+                    logger.error(f"All LLMs failed for RAG summary: {e}")
+                    raise
+            
+            if not llm_response:
+                raise Exception("No LLM available for RAG summary generation")
+            
+            # Step 4: Parse and format response
+            logger.info("Step 4: Parsing and formatting RAG response...")
+            brief_summary, detailed_summary = self._parse_summary_response(llm_response)
+            
+            # Apply formatting cleanup
+            brief_summary = self._strip_italics(brief_summary)
+            detailed_summary = self._strip_italics(detailed_summary)
+            
+            latency = time.time() - start_time
+            
+            logger.info(f"=== RAG SUMMARY COMPLETE in {latency:.2f}s ===")
+            
+            return {
+                'brief': brief_summary,
+                'detailed': detailed_summary,
+                'rag_metadata': {
+                    'knowledge_sources': [chunk.get('source') for chunk in rag_context],
+                    'retrieval_count': len(rag_context),
+                    'tokens_input': int(tokens_input),
+                    'tokens_output': int(tokens_output),
+                    'model': model_used,
+                    'latency': latency
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"RAG summary generation failed: {e}")
+            logger.warning("Falling back to standard summary generation")
+            # Fallback to standard method if RAG fails
+            return self._generate_executive_summary(metrics, insights, recommendations)
