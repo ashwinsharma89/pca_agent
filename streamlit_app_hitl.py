@@ -842,7 +842,7 @@ with tab_auto:
     with col_upload:
         input_method = st.radio(
             "Choose Input Method",
-            options=["📊 CSV Data", "📸 Dashboard Screenshots"],
+            options=["📊 CSV Data", "🗄️ Database", "📸 Dashboard Screenshots"],
             horizontal=True,
         )
     with col_tip:
@@ -986,6 +986,184 @@ with tab_auto:
                         analysis = expert.analyze_all(df)
                         st.session_state.analysis_data = analysis
                         st.session_state.analysis_complete = True
+                        st.rerun()
+
+        elif input_method == "🗄️ Database":
+            from src.data.database_connector import DatabaseConnector
+            
+            st.markdown("### 🗄️ Connect to Database")
+            
+            # Database type selection
+            db_type = st.selectbox(
+                "Database Type",
+                options=["postgresql", "mysql", "sqlite", "mssql"],
+                format_func=lambda x: {
+                    "postgresql": "PostgreSQL",
+                    "mysql": "MySQL",
+                    "sqlite": "SQLite",
+                    "mssql": "SQL Server"
+                }.get(x, x)
+            )
+            
+            # Connection parameters based on database type
+            if db_type == "sqlite":
+                file_path = st.text_input("Database File Path", placeholder="path/to/database.db")
+                
+                if st.button("🔌 Connect to SQLite"):
+                    if file_path:
+                        try:
+                            with st.spinner("Connecting to database..."):
+                                connector = DatabaseConnector()
+                                connector.connect(db_type="sqlite", file_path=file_path)
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to SQLite database!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please provide database file path")
+            
+            else:
+                # Server-based databases
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="localhost")
+                    database = st.text_input("Database Name", placeholder="campaign_data")
+                with col2:
+                    port = st.number_input("Port", value={
+                        "postgresql": 5432,
+                        "mysql": 3306,
+                        "mssql": 1433
+                    }.get(db_type, 5432), min_value=1, max_value=65535)
+                    
+                col3, col4 = st.columns(2)
+                with col3:
+                    username = st.text_input("Username", placeholder="user")
+                with col4:
+                    password = st.text_input("Password", type="password", placeholder="password")
+                
+                if st.button(f"🔌 Connect to {db_type.upper()}"):
+                    if all([host, database, username, password]):
+                        try:
+                            with st.spinner("Connecting to database..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type=db_type,
+                                    host=host,
+                                    port=port,
+                                    database=database,
+                                    username=username,
+                                    password=password
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success(f"✅ Connected to {db_type.upper()} database!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all connection fields")
+            
+            # Show table selection if connected
+            if st.session_state.get('db_connected', False):
+                st.markdown("---")
+                st.markdown("### 📊 Select Data")
+                
+                connector = st.session_state.db_connector
+                
+                # Get tables
+                try:
+                    tables = connector.get_tables()
+                    
+                    data_source = st.radio(
+                        "Data Source",
+                        options=["📋 Select Table", "✍️ Custom Query"],
+                        horizontal=True
+                    )
+                    
+                    if data_source == "📋 Select Table":
+                        selected_table = st.selectbox("Select Table", options=tables)
+                        
+                        # Show schema
+                        if st.checkbox("Show Table Schema"):
+                            schema = connector.get_table_schema(selected_table)
+                            st.dataframe(schema, use_container_width=True)
+                        
+                        # Row limit
+                        limit = st.number_input("Row Limit (0 = all rows)", min_value=0, value=10000, step=1000)
+                        
+                        if st.button("📥 Load Data from Table"):
+                            try:
+                                with st.spinner(f"Loading data from {selected_table}..."):
+                                    if limit > 0:
+                                        df = connector.load_table(selected_table, limit=limit)
+                                    else:
+                                        df = connector.load_table(selected_table)
+                                    
+                                    # Normalize column names
+                                    df = normalize_campaign_dataframe(df)
+                                    st.session_state.df = df
+                                    
+                                    st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Failed to load data: {str(e)}")
+                    
+                    else:  # Custom Query
+                        query = st.text_area(
+                            "SQL Query",
+                            placeholder="SELECT * FROM campaigns WHERE date >= '2024-01-01'",
+                            height=150
+                        )
+                        
+                        if st.button("▶️ Execute Query"):
+                            if query.strip():
+                                try:
+                                    with st.spinner("Executing query..."):
+                                        df = connector.execute_query(query)
+                                        
+                                        # Normalize column names
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        
+                                        st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Query failed: {str(e)}")
+                            else:
+                                st.warning("Please enter a SQL query")
+                    
+                    # Show loaded data preview
+                    if 'df' in st.session_state and st.session_state.df is not None:
+                        df = st.session_state.df
+                        st.markdown("---")
+                        st.markdown("### 📊 Data Preview")
+                        st.dataframe(df.head(10), use_container_width=True)
+                        
+                        # Show metrics
+                        col_a, col_b, col_c, col_d = st.columns(4)
+                        col_a.metric("Rows", f"{len(df):,}")
+                        col_b.metric("Columns", len(df.columns))
+                        
+                        if "Spend" in df.columns:
+                            total_spend = df["Spend"].sum()
+                            col_d.metric("Total Spend", f"${total_spend:,.0f}")
+                        
+                        st.markdown("---")
+                        if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
+                            with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                                expert = MediaAnalyticsExpert()
+                                analysis = expert.analyze_all(df)
+                                st.session_state.analysis_data = analysis
+                                st.session_state.analysis_complete = True
+                                st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    if st.button("🔌 Reconnect"):
+                        st.session_state.db_connected = False
+                        st.session_state.db_connector = None
                         st.rerun()
 
         else:
