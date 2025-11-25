@@ -1848,6 +1848,21 @@ Generate the executive summary now:"""
     
     def _prepare_summary_data(self, metrics: Dict, insights: List, recommendations: List) -> Dict:
         """Prepare summary data dictionary (shared by both standard and RAG methods)."""
+        # Convert to JSON-serializable format
+        def make_serializable(obj):
+            """Convert pandas objects to JSON-serializable types."""
+            if isinstance(obj, pd.Series):
+                return obj.to_dict()
+            elif isinstance(obj, pd.DataFrame):
+                return obj.to_dict('records')
+            elif isinstance(obj, (np.integer, np.floating)):
+                return float(obj)
+            elif isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [make_serializable(item) for item in obj]
+            return obj
+        
         overview = make_serializable(metrics.get('overview', {}))
         platform_metrics = metrics.get('by_platform', {})
         campaign_metrics = metrics.get('by_campaign', {})
