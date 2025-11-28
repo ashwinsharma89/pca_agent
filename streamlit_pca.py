@@ -2146,6 +2146,9 @@ with tab_auto:
                     "Conversion": "#10b981"      # Green - Bottom of funnel
                 }
 
+                # Store original column name before normalization
+                funnel_stage_col_original = funnel_stage_col
+                
                 # Map funnel stage values to standard names (case-insensitive)
                 def normalize_funnel_stage(stage):
                     stage_str = str(stage).strip().lower()
@@ -2173,7 +2176,6 @@ with tab_auto:
                 stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
                 
                 # Use normalized stage for grouping
-                funnel_stage_col_original = funnel_stage_col
                 funnel_stage_col = 'Normalized_Stage'
 
                 # Check if we have any data after normalization
