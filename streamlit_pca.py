@@ -1715,6 +1715,19 @@ with tab_auto:
                     st.markdown(detailed_summary)
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        
+        # Display data quality warnings for ROAS/Revenue
+        roas_analysis = analysis.get("roas_revenue_analysis", {})
+        data_quality = roas_analysis.get("data_quality", {})
+        missing_warning = data_quality.get("missing_data_warning")
+        zero_roas_count = data_quality.get("zero_roas_count", 0)
+        
+        if missing_warning or zero_roas_count > 0:
+            st.markdown("### ⚠️ Data Quality Notices")
+            if missing_warning:
+                st.warning(f"**Revenue Data:** {missing_warning}")
+            if zero_roas_count > 0:
+                st.info(f"📊 **Note:** {zero_roas_count} records with zero ROAS were excluded from revenue analysis to ensure accurate metrics.")
 
         st.markdown("<div id='overview'></div>", unsafe_allow_html=True)
         st.markdown("## 🧭 Overview")
@@ -1963,14 +1976,37 @@ with tab_auto:
                 
                 st.plotly_chart(fig, width="stretch")
         
-        # 2. Month-Year Trend Analysis (Dual-Axis with Dynamic Metric Selection)
+        # 2. Adaptive Time Trend Analysis (Monthly/Weekly/Daily based on data)
         if has_date and spend_col:
-            st.markdown("### 📅 Monthly Trend Analysis")
-            
             df_trend = df.copy()
             df_trend['Date'] = pd.to_datetime(df_trend['Date'], errors='coerce')
             df_trend = df_trend.dropna(subset=['Date'])
-            df_trend['Month_Year'] = df_trend['Date'].dt.to_period('M').astype(str)
+            
+            # Determine optimal time granularity based on data span
+            date_range = (df_trend['Date'].max() - df_trend['Date'].min()).days
+            unique_dates = df_trend['Date'].nunique()
+            
+            if date_range <= 60 and unique_dates >= 7:
+                # Less than 2 months with daily data -> use Daily
+                time_granularity = 'Daily'
+                df_trend['Time_Period'] = df_trend['Date'].dt.strftime('%Y-%m-%d')
+                period_label = 'Day'
+            elif date_range <= 180 and unique_dates >= 12:
+                # Less than 6 months with weekly data -> use Weekly
+                time_granularity = 'Weekly'
+                df_trend['Time_Period'] = df_trend['Date'].dt.to_period('W').apply(lambda r: r.start_time.strftime('%Y-%m-%d'))
+                period_label = 'Week'
+            else:
+                # Default to Monthly for longer periods
+                time_granularity = 'Monthly'
+                df_trend['Time_Period'] = df_trend['Date'].dt.to_period('M').astype(str)
+                period_label = 'Month'
+            
+            # Keep Month_Year for backward compatibility
+            df_trend['Month_Year'] = df_trend['Time_Period']
+            
+            st.markdown(f"### 📅 {time_granularity} Trend Analysis")
+            st.caption(f"📊 Auto-detected granularity: **{time_granularity}** (Date range: {date_range} days, {unique_dates} unique dates)")
 
             # Optional dimension filtering (Campaign, Placement, Funnel, Creative, Audience, etc.)
             dimension_map = [
@@ -2167,7 +2203,7 @@ with tab_auto:
                 
                 # Debug: Show original vs normalized stages with detailed mapping
                 original_stages = stage_monthly[funnel_stage_col_original].unique()
-                normalized_stages = stage_monthly['Normalized_Stage'].unique()
+                normalized_stages_before = stage_monthly['Normalized_Stage'].unique()
                 
                 # Create detailed mapping report
                 mapping_details = []
@@ -2179,10 +2215,16 @@ with tab_auto:
                 st.info(f"🔍 **Funnel Stage Mapping:**\n\n"
                        f"Original stages found: {', '.join(map(str, original_stages))}\n\n"
                        f"Detailed mapping:\n" + "\n".join(mapping_details) + "\n\n"
-                       f"Final normalized stages: {', '.join(map(str, normalized_stages))}")
+                       f"Normalized stages before filter: {', '.join(map(str, normalized_stages_before))}")
                 
                 # Filter data to only include the three main funnel stages
+                records_before = len(stage_monthly)
                 stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
+                records_after = len(stage_monthly)
+                normalized_stages_after = stage_monthly['Normalized_Stage'].unique()
+                
+                st.caption(f"📊 Filter results: {records_before} records → {records_after} records | "
+                          f"Stages after filter: {', '.join(map(str, normalized_stages_after))}")
                 
                 # Use normalized stage for grouping
                 funnel_stage_col = 'Normalized_Stage'

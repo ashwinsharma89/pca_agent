@@ -1421,20 +1421,58 @@ Platform Performance (Multi-KPI View):
         return funnel
     
     def _analyze_roas_revenue(self, df: pd.DataFrame, metrics: Dict) -> Dict[str, Any]:
-        """Analyze ROAS and revenue performance."""
+        """Analyze ROAS and revenue performance with graceful handling of missing/zero values."""
         roas_analysis = {
             "overall": {},
             "by_platform": {},
             "by_campaign": {},
             "efficiency_tiers": {},
-            "revenue_attribution": {}
+            "revenue_attribution": {},
+            "data_quality": {
+                "has_roas": False,
+                "has_revenue": False,
+                "zero_roas_count": 0,
+                "missing_data_warning": None
+            }
         }
         
-        if 'ROAS' in df.columns and 'Spend' in df.columns:
-            # Overall ROAS analysis
-            total_spend = df['Spend'].sum()
-            avg_roas = df['ROAS'].mean()
-            weighted_roas = (df['ROAS'] * df['Spend']).sum() / total_spend if total_spend > 0 else 0
+        # Check for ROAS and Revenue columns
+        has_roas = 'ROAS' in df.columns
+        revenue_col = self._get_column(df, 'revenue')
+        has_revenue = revenue_col is not None
+        
+        roas_analysis["data_quality"]["has_roas"] = has_roas
+        roas_analysis["data_quality"]["has_revenue"] = has_revenue
+        
+        # If neither ROAS nor Revenue exists, return early with warning
+        if not has_roas and not has_revenue:
+            roas_analysis["data_quality"]["missing_data_warning"] = (
+                "No ROAS or Revenue data available. Revenue analysis skipped. "
+                "Consider adding Revenue or Conversion Value columns for ROI insights."
+            )
+            logger.warning("ROAS/Revenue analysis skipped: No revenue data available")
+            return roas_analysis
+        
+        if has_roas and 'Spend' in df.columns:
+            # Filter out zero and NaN ROAS values
+            df_valid = df[(df['ROAS'].notna()) & (df['ROAS'] > 0)].copy()
+            zero_roas_count = len(df[df['ROAS'] == 0])
+            roas_analysis["data_quality"]["zero_roas_count"] = zero_roas_count
+            
+            if zero_roas_count > 0:
+                logger.info(f"Found {zero_roas_count} records with zero ROAS - excluding from analysis")
+            
+            if df_valid.empty:
+                roas_analysis["data_quality"]["missing_data_warning"] = (
+                    f"All ROAS values are zero or missing ({len(df)} records). "
+                    "Unable to calculate meaningful ROAS metrics."
+                )
+                return roas_analysis
+            
+            # Overall ROAS analysis (using valid data only)
+            total_spend = df_valid['Spend'].sum()
+            avg_roas = df_valid['ROAS'].mean()
+            weighted_roas = (df_valid['ROAS'] * df_valid['Spend']).sum() / total_spend if total_spend > 0 else 0
             
             # Calculate implied revenue
             implied_revenue = total_spend * weighted_roas
@@ -1448,39 +1486,40 @@ Platform Performance (Multi-KPI View):
                 "profit_margin": float(((implied_revenue - total_spend) / implied_revenue * 100)) if implied_revenue > 0 else 0
             }
             
-            # ROAS by platform
-            if 'Platform' in df.columns:
-                platform_roas = df.groupby('Platform').agg({
+            # ROAS by platform (use valid data only)
+            if 'Platform' in df_valid.columns:
+                platform_roas = df_valid.groupby('Platform').agg({
                     'ROAS': 'mean',
                     'Spend': 'sum'
                 })
                 
                 for platform, row in platform_roas.iterrows():
-                    platform_revenue = row['Spend'] * row['ROAS']
-                    roas_analysis["by_platform"][platform] = {
-                        "roas": float(row['ROAS']),
-                        "spend": float(row['Spend']),
-                        "revenue": float(platform_revenue),
-                        "profit": float(platform_revenue - row['Spend']),
-                        "vs_benchmark": self._compare_to_benchmark(platform, row['ROAS'])
-                    }
+                    if pd.notna(row['ROAS']) and row['ROAS'] > 0:
+                        platform_revenue = row['Spend'] * row['ROAS']
+                        roas_analysis["by_platform"][platform] = {
+                            "roas": float(row['ROAS']),
+                            "spend": float(row['Spend']),
+                            "revenue": float(platform_revenue),
+                            "profit": float(platform_revenue - row['Spend']),
+                            "vs_benchmark": self._compare_to_benchmark(platform, row['ROAS'])
+                        }
             
-            # Efficiency tiers
+            # Efficiency tiers (use valid data only)
             roas_analysis["efficiency_tiers"] = {
                 "excellent": {
-                    "count": len(df[df['ROAS'] >= 4.5]),
-                    "spend": float(df[df['ROAS'] >= 4.5]['Spend'].sum()),
-                    "avg_roas": float(df[df['ROAS'] >= 4.5]['ROAS'].mean()) if len(df[df['ROAS'] >= 4.5]) > 0 else 0
+                    "count": len(df_valid[df_valid['ROAS'] >= 4.5]),
+                    "spend": float(df_valid[df_valid['ROAS'] >= 4.5]['Spend'].sum()),
+                    "avg_roas": float(df_valid[df_valid['ROAS'] >= 4.5]['ROAS'].mean()) if len(df_valid[df_valid['ROAS'] >= 4.5]) > 0 else 0
                 },
                 "good": {
-                    "count": len(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]),
-                    "spend": float(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]['Spend'].sum()),
-                    "avg_roas": float(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]['ROAS'].mean()) if len(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]) > 0 else 0
+                    "count": len(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]),
+                    "spend": float(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]['Spend'].sum()),
+                    "avg_roas": float(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]['ROAS'].mean()) if len(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]) > 0 else 0
                 },
                 "needs_improvement": {
-                    "count": len(df[df['ROAS'] < 3.5]),
-                    "spend": float(df[df['ROAS'] < 3.5]['Spend'].sum()),
-                    "avg_roas": float(df[df['ROAS'] < 3.5]['ROAS'].mean()) if len(df[df['ROAS'] < 3.5]) > 0 else 0
+                    "count": len(df_valid[df_valid['ROAS'] < 3.5]),
+                    "spend": float(df_valid[df_valid['ROAS'] < 3.5]['Spend'].sum()),
+                    "avg_roas": float(df_valid[df_valid['ROAS'] < 3.5]['ROAS'].mean()) if len(df_valid[df_valid['ROAS'] < 3.5]) > 0 else 0
                 }
             }
         
