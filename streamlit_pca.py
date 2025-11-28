@@ -105,7 +105,13 @@ st.markdown(
     h1, h2, h3 {
         font-weight: 600;
         letter-spacing: -0.01em;
-        color: #f1f5f9;
+        color: #f1f5f9 !important;
+    }
+    
+    /* IE11 fallback for text visibility */
+    p, span, div, label {
+        color: #e2e8f0 !important;
+        opacity: 1 !important;
     }
     
     /* === LAYOUT & CONTAINERS === */
@@ -130,6 +136,14 @@ st.markdown(
     
     [data-testid="stSidebar"] * {
         color: #e2e8f0 !important;
+        opacity: 1 !important;
+    }
+    
+    /* IE11: Force text contrast */
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label {
+        color: #ffffff !important;
     }
     
     [data-testid="stSidebar"] .stMarkdown {
@@ -213,9 +227,16 @@ st.markdown(
     .exec-summary {
         font-size: 1rem;
         line-height: 1.6;
-        color: #e2e8f0;
+        color: #e2e8f0 !important;
         margin-bottom: 0;
         white-space: pre-wrap;
+        opacity: 1 !important;
+    }
+    
+    /* IE11: Force all text elements to be visible */
+    .stMarkdown, .stMarkdown p, .stMarkdown span {
+        color: #e2e8f0 !important;
+        opacity: 1 !important;
     }
     
     .quick-nav-grid {
@@ -2128,15 +2149,25 @@ with tab_auto:
                 # Map funnel stage values to standard names (case-insensitive)
                 def normalize_funnel_stage(stage):
                     stage_str = str(stage).strip().lower()
-                    if any(x in stage_str for x in ['aware', 'top', 'impression', 'reach']):
+                    # Awareness keywords - expanded
+                    if any(x in stage_str for x in ['aware', 'top', 'impression', 'reach', 'brand', 'discovery', 'tofu']):
                         return 'Awareness'
-                    elif any(x in stage_str for x in ['consider', 'middle', 'interest', 'engagement']):
-                        return 'Consideration'
-                    elif any(x in stage_str for x in ['convert', 'bottom', 'action', 'purchase', 'lead']):
+                    # Conversion keywords - check BEFORE consideration to avoid false matches
+                    elif any(x in stage_str for x in ['convert', 'conversion', 'bottom', 'action', 'purchase', 'lead', 'bofu', 'sale', 'acquisition']):
                         return 'Conversion'
+                    # Consideration keywords
+                    elif any(x in stage_str for x in ['consider', 'consideration', 'middle', 'interest', 'engagement', 'mofu', 'evaluation']):
+                        return 'Consideration'
                     return stage  # Keep original if no match
                 
                 stage_monthly['Normalized_Stage'] = stage_monthly[funnel_stage_col].apply(normalize_funnel_stage)
+                
+                # Debug: Show original vs normalized stages
+                original_stages = stage_monthly[funnel_stage_col_original].unique()
+                normalized_stages = stage_monthly['Normalized_Stage'].unique()
+                st.info(f"🔍 **Funnel Stage Mapping:**\n\n"
+                       f"Original stages found: {', '.join(map(str, original_stages))}\n\n"
+                       f"Mapped to: {', '.join(map(str, normalized_stages))}")
                 
                 # Filter data to only include the three main funnel stages
                 stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
