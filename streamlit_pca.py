@@ -2152,25 +2152,34 @@ with tab_auto:
                 # Map funnel stage values to standard names (case-insensitive)
                 def normalize_funnel_stage(stage):
                     stage_str = str(stage).strip().lower()
-                    # Awareness keywords - expanded
-                    if any(x in stage_str for x in ['aware', 'top', 'impression', 'reach', 'brand', 'discovery', 'tofu']):
+                    # Awareness keywords - expanded (including "upper")
+                    if any(x in stage_str for x in ['aware', 'awareness', 'top', 'upper', 'impression', 'reach', 'brand', 'discovery', 'tofu']):
                         return 'Awareness'
-                    # Conversion keywords - check BEFORE consideration to avoid false matches
-                    elif any(x in stage_str for x in ['convert', 'conversion', 'bottom', 'action', 'purchase', 'lead', 'bofu', 'sale', 'acquisition']):
+                    # Conversion keywords - check BEFORE consideration to avoid false matches (including "lower")
+                    elif any(x in stage_str for x in ['convert', 'conversion', 'bottom', 'lower', 'action', 'purchase', 'lead', 'bofu', 'sale', 'acquisition']):
                         return 'Conversion'
                     # Consideration keywords
-                    elif any(x in stage_str for x in ['consider', 'consideration', 'middle', 'interest', 'engagement', 'mofu', 'evaluation']):
+                    elif any(x in stage_str for x in ['consider', 'consideration', 'middle', 'mid', 'interest', 'engagement', 'mofu', 'evaluation']):
                         return 'Consideration'
                     return stage  # Keep original if no match
                 
                 stage_monthly['Normalized_Stage'] = stage_monthly[funnel_stage_col].apply(normalize_funnel_stage)
                 
-                # Debug: Show original vs normalized stages
+                # Debug: Show original vs normalized stages with detailed mapping
                 original_stages = stage_monthly[funnel_stage_col_original].unique()
                 normalized_stages = stage_monthly['Normalized_Stage'].unique()
+                
+                # Create detailed mapping report
+                mapping_details = []
+                for orig in original_stages:
+                    norm = normalize_funnel_stage(orig)
+                    count = len(stage_monthly[stage_monthly[funnel_stage_col_original] == orig])
+                    mapping_details.append(f"  • '{orig}' → '{norm}' ({count} records)")
+                
                 st.info(f"🔍 **Funnel Stage Mapping:**\n\n"
                        f"Original stages found: {', '.join(map(str, original_stages))}\n\n"
-                       f"Mapped to: {', '.join(map(str, normalized_stages))}")
+                       f"Detailed mapping:\n" + "\n".join(mapping_details) + "\n\n"
+                       f"Final normalized stages: {', '.join(map(str, normalized_stages))}")
                 
                 # Filter data to only include the three main funnel stages
                 stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
@@ -2182,44 +2191,60 @@ with tab_auto:
                 if stage_monthly.empty:
                     st.warning(f"⚠️ No data matched the standard funnel stages after normalization. Original stages found: {', '.join(map(str, unique_funnels))}")
                 else:
+                    # Debug: Show data availability per stage
+                    st.caption("📈 **Data availability per stage:**")
+                    for stage in stage_order:
+                        stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                        if not stage_subset.empty:
+                            ctr_valid = stage_subset['CTR'].notna().sum()
+                            conv_valid = stage_subset['Conversions'].notna().sum()
+                            st.caption(f"  • {stage}: {len(stage_subset)} records | CTR: {ctr_valid} valid | Conversions: {conv_valid} valid")
+                    
                     # Add traces for each funnel stage
                     for stage in stage_order:
                         stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
                         if stage_subset.empty:
+                            st.caption(f"⚠️ No data for {stage}")
                             continue
                         
                         color = color_map[stage]
                         emoji = stage_emojis[stage]
                         
                         # Primary metric: CTR (solid line with markers)
-                        fig.add_trace(
-                            go.Scatter(
-                                x=stage_subset['Month_Year'],
-                                y=stage_subset['CTR'],
-                                name=f"{emoji} {stage} - CTR",
-                                mode='lines+markers',
-                                line=dict(color=color, width=3.5),
-                                marker=dict(size=10, symbol='circle'),
-                                legendgroup=stage,
-                                hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
-                            ),
-                            secondary_y=False
-                        )
+                        # Only add trace if we have valid CTR data
+                        if stage_subset['CTR'].notna().any():
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=stage_subset['Month_Year'],
+                                    y=stage_subset['CTR'],
+                                    name=f"{emoji} {stage} - CTR",
+                                    mode='lines+markers',
+                                    line=dict(color=color, width=3.5),
+                                    marker=dict(size=10, symbol='circle'),
+                                    legendgroup=stage,
+                                    connectgaps=True,  # Connect lines even with missing data
+                                    hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                                ),
+                                secondary_y=False
+                            )
                         
                         # Secondary metric: Conversions (dashed line)
-                        fig.add_trace(
-                            go.Scatter(
-                                x=stage_subset['Month_Year'],
-                                y=stage_subset['Conversions'],
-                                name=f"{emoji} {stage} - Conversions",
-                                mode='lines+markers',
-                                line=dict(color=color, width=2.5, dash='dot'),
-                                marker=dict(size=8, symbol='diamond'),
-                                legendgroup=stage,
-                                hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
-                            ),
-                            secondary_y=True
-                        )
+                        # Only add trace if we have valid Conversions data
+                        if stage_subset['Conversions'].notna().any():
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=stage_subset['Month_Year'],
+                                    y=stage_subset['Conversions'],
+                                    name=f"{emoji} {stage} - Conversions",
+                                    mode='lines+markers',
+                                    line=dict(color=color, width=2.5, dash='dot'),
+                                    marker=dict(size=8, symbol='diamond'),
+                                    legendgroup=stage,
+                                    connectgaps=True,  # Connect lines even with missing data
+                                    hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
+                                ),
+                                secondary_y=True
+                            )
 
                     # Update layout with clear funnel stage indicators
                     fig.update_layout(
