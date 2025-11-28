@@ -515,6 +515,11 @@ SQL Query:"""
         """
         import re
         
+        # Fix double-quoted identifiers that result from over-escaping
+        # Pattern: ""identifier" or ""identifier".something"
+        # This happens when LLM generates "Column.2" and we try to quote it again
+        sql_query = re.sub(r'""([^"]+)"', r'"\1', sql_query)  # ""Campaign_Name" -> "Campaign_Name
+        
         # Check if we need to use quoted column names (spaces in original data)
         # Look at the actual schema to determine the format
         if self.schema_info and 'columns' in self.schema_info:
@@ -525,12 +530,12 @@ SQL Query:"""
             
             if has_spaces:
                 # Replace underscored versions with quoted space versions
+                # But only if not already quoted
                 patterns = [
-                    (r'\bTotal_Spent\b', '"Total Spent"'),
-                    (r'\bSite_Visit\b', '"Site Visit"'),
-                    (r'\bAd_Type\b', '"Ad Type"'),
-                    (r'\bDevice_Type\b', '"Device Type"'),
-                    (r'\bCampaign_Name\b', '"Campaign_Name"'),  # This one might have underscore
+                    (r'(?<!")Total_Spent(?!")', '"Total Spent"'),
+                    (r'(?<!")Site_Visit(?!")', '"Site Visit"'),
+                    (r'(?<!")Ad_Type(?!")', '"Ad Type"'),
+                    (r'(?<!")Device_Type(?!")', '"Device Type"'),
                 ]
             else:
                 # Replace space versions with underscored versions
