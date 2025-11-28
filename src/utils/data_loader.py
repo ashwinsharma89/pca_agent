@@ -446,13 +446,14 @@ def normalize_campaign_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "ad_placement": "Placement",
     }
 
-    existing = set(df.columns)
+    # Convert columns to list to avoid unhashable type errors
+    existing = set(str(c) for c in df.columns)
     rename_map = {}
     for col in df.columns:
         key = _norm(col)
         target = column_mapping.get(key)
         if target and target not in existing:
-            rename_map[col] = target
+            rename_map[str(col)] = target
 
     if rename_map:
         df = df.rename(columns=rename_map)

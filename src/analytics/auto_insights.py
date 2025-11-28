@@ -208,8 +208,15 @@ class MediaAnalyticsExpert:
             key_parts: List[Any] = []
             for field in key_fields:
                 value = entry.get(field)
+                # Convert unhashable types to hashable equivalents
                 if isinstance(value, list):
                     key_parts.append(tuple(value))
+                elif isinstance(value, (pd.Series, pd.DataFrame)):
+                    # Convert pandas objects to string representation
+                    key_parts.append(str(value))
+                elif isinstance(value, dict):
+                    # Convert dict to sorted tuple of items
+                    key_parts.append(tuple(sorted(value.items())))
                 else:
                     key_parts.append(value)
             key = tuple(key_parts)
@@ -1414,20 +1421,58 @@ Platform Performance (Multi-KPI View):
         return funnel
     
     def _analyze_roas_revenue(self, df: pd.DataFrame, metrics: Dict) -> Dict[str, Any]:
-        """Analyze ROAS and revenue performance."""
+        """Analyze ROAS and revenue performance with graceful handling of missing/zero values."""
         roas_analysis = {
             "overall": {},
             "by_platform": {},
             "by_campaign": {},
             "efficiency_tiers": {},
-            "revenue_attribution": {}
+            "revenue_attribution": {},
+            "data_quality": {
+                "has_roas": False,
+                "has_revenue": False,
+                "zero_roas_count": 0,
+                "missing_data_warning": None
+            }
         }
         
-        if 'ROAS' in df.columns and 'Spend' in df.columns:
-            # Overall ROAS analysis
-            total_spend = df['Spend'].sum()
-            avg_roas = df['ROAS'].mean()
-            weighted_roas = (df['ROAS'] * df['Spend']).sum() / total_spend if total_spend > 0 else 0
+        # Check for ROAS and Revenue columns
+        has_roas = 'ROAS' in df.columns
+        revenue_col = self._get_column(df, 'revenue')
+        has_revenue = revenue_col is not None
+        
+        roas_analysis["data_quality"]["has_roas"] = has_roas
+        roas_analysis["data_quality"]["has_revenue"] = has_revenue
+        
+        # If neither ROAS nor Revenue exists, return early with warning
+        if not has_roas and not has_revenue:
+            roas_analysis["data_quality"]["missing_data_warning"] = (
+                "No ROAS or Revenue data available. Revenue analysis skipped. "
+                "Consider adding Revenue or Conversion Value columns for ROI insights."
+            )
+            logger.warning("ROAS/Revenue analysis skipped: No revenue data available")
+            return roas_analysis
+        
+        if has_roas and 'Spend' in df.columns:
+            # Filter out zero and NaN ROAS values
+            df_valid = df[(df['ROAS'].notna()) & (df['ROAS'] > 0)].copy()
+            zero_roas_count = len(df[df['ROAS'] == 0])
+            roas_analysis["data_quality"]["zero_roas_count"] = zero_roas_count
+            
+            if zero_roas_count > 0:
+                logger.info(f"Found {zero_roas_count} records with zero ROAS - excluding from analysis")
+            
+            if df_valid.empty:
+                roas_analysis["data_quality"]["missing_data_warning"] = (
+                    f"All ROAS values are zero or missing ({len(df)} records). "
+                    "Unable to calculate meaningful ROAS metrics."
+                )
+                return roas_analysis
+            
+            # Overall ROAS analysis (using valid data only)
+            total_spend = df_valid['Spend'].sum()
+            avg_roas = df_valid['ROAS'].mean()
+            weighted_roas = (df_valid['ROAS'] * df_valid['Spend']).sum() / total_spend if total_spend > 0 else 0
             
             # Calculate implied revenue
             implied_revenue = total_spend * weighted_roas
@@ -1441,39 +1486,40 @@ Platform Performance (Multi-KPI View):
                 "profit_margin": float(((implied_revenue - total_spend) / implied_revenue * 100)) if implied_revenue > 0 else 0
             }
             
-            # ROAS by platform
-            if 'Platform' in df.columns:
-                platform_roas = df.groupby('Platform').agg({
+            # ROAS by platform (use valid data only)
+            if 'Platform' in df_valid.columns:
+                platform_roas = df_valid.groupby('Platform').agg({
                     'ROAS': 'mean',
                     'Spend': 'sum'
                 })
                 
                 for platform, row in platform_roas.iterrows():
-                    platform_revenue = row['Spend'] * row['ROAS']
-                    roas_analysis["by_platform"][platform] = {
-                        "roas": float(row['ROAS']),
-                        "spend": float(row['Spend']),
-                        "revenue": float(platform_revenue),
-                        "profit": float(platform_revenue - row['Spend']),
-                        "vs_benchmark": self._compare_to_benchmark(platform, row['ROAS'])
-                    }
+                    if pd.notna(row['ROAS']) and row['ROAS'] > 0:
+                        platform_revenue = row['Spend'] * row['ROAS']
+                        roas_analysis["by_platform"][platform] = {
+                            "roas": float(row['ROAS']),
+                            "spend": float(row['Spend']),
+                            "revenue": float(platform_revenue),
+                            "profit": float(platform_revenue - row['Spend']),
+                            "vs_benchmark": self._compare_to_benchmark(platform, row['ROAS'])
+                        }
             
-            # Efficiency tiers
+            # Efficiency tiers (use valid data only)
             roas_analysis["efficiency_tiers"] = {
                 "excellent": {
-                    "count": len(df[df['ROAS'] >= 4.5]),
-                    "spend": float(df[df['ROAS'] >= 4.5]['Spend'].sum()),
-                    "avg_roas": float(df[df['ROAS'] >= 4.5]['ROAS'].mean()) if len(df[df['ROAS'] >= 4.5]) > 0 else 0
+                    "count": len(df_valid[df_valid['ROAS'] >= 4.5]),
+                    "spend": float(df_valid[df_valid['ROAS'] >= 4.5]['Spend'].sum()),
+                    "avg_roas": float(df_valid[df_valid['ROAS'] >= 4.5]['ROAS'].mean()) if len(df_valid[df_valid['ROAS'] >= 4.5]) > 0 else 0
                 },
                 "good": {
-                    "count": len(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]),
-                    "spend": float(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]['Spend'].sum()),
-                    "avg_roas": float(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]['ROAS'].mean()) if len(df[(df['ROAS'] >= 3.5) & (df['ROAS'] < 4.5)]) > 0 else 0
+                    "count": len(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]),
+                    "spend": float(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]['Spend'].sum()),
+                    "avg_roas": float(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]['ROAS'].mean()) if len(df_valid[(df_valid['ROAS'] >= 3.5) & (df_valid['ROAS'] < 4.5)]) > 0 else 0
                 },
                 "needs_improvement": {
-                    "count": len(df[df['ROAS'] < 3.5]),
-                    "spend": float(df[df['ROAS'] < 3.5]['Spend'].sum()),
-                    "avg_roas": float(df[df['ROAS'] < 3.5]['ROAS'].mean()) if len(df[df['ROAS'] < 3.5]) > 0 else 0
+                    "count": len(df_valid[df_valid['ROAS'] < 3.5]),
+                    "spend": float(df_valid[df_valid['ROAS'] < 3.5]['Spend'].sum()),
+                    "avg_roas": float(df_valid[df_valid['ROAS'] < 3.5]['ROAS'].mean()) if len(df_valid[df_valid['ROAS'] < 3.5]) > 0 else 0
                 }
             }
         
@@ -1644,3 +1690,383 @@ Platform Performance (Multi-KPI View):
         }
         
         return tactics.get(platform, ["Platform-specific tactics not available"])
+    
+    # ==================== RAG-ENHANCED METHODS (EXPERIMENTAL) ====================
+    # These methods are isolated and do NOT affect existing functionality
+    
+    def _initialize_rag_engine(self):
+        """Lazy initialization of RAG engine (only when needed).
+        
+        Uses existing knowledge base from data/knowledge_base.json if available.
+        Builds vector store on first use if not already built.
+        """
+        if hasattr(self, '_rag_engine') and self._rag_engine is not None:
+            return self._rag_engine
+        
+        try:
+            from ..knowledge.vector_store import VectorStoreConfig, VectorStoreBuilder, VectorRetriever, HybridRetriever
+            from pathlib import Path
+            import json
+            
+            # Check if vector store exists, if not build it from existing knowledge base
+            config = VectorStoreConfig()
+            
+            if not config.index_path.exists() or not config.metadata_path.exists():
+                logger.info("Vector store not found. Building from existing knowledge base...")
+                
+                # Load existing knowledge base
+                kb_path = Path("data/knowledge_base.json")
+                if kb_path.exists():
+                    with open(kb_path, 'r', encoding='utf-8') as f:
+                        documents = json.load(f)
+                    
+                    logger.info(f"Loaded {len(documents)} documents from knowledge base")
+                    
+                    # Build vector store
+                    builder = VectorStoreBuilder(
+                        config=config,
+                        client=self.client if not self.use_anthropic else None
+                    )
+                    builder.build_from_documents(documents)
+                    logger.info("Vector store built successfully")
+                else:
+                    logger.warning(f"Knowledge base not found at {kb_path}")
+                    self._rag_engine = None
+                    return None
+            
+            # Initialize retrievers
+            vector_retriever = VectorRetriever(config=config)
+            hybrid_retriever = HybridRetriever(config=config, use_keyword=True, use_rerank=False)
+            
+            # Create a simple RAG engine wrapper
+            class SimpleRAGEngine:
+                def __init__(self, vector_retriever, hybrid_retriever):
+                    self.vector_retriever = vector_retriever
+                    self.hybrid_retriever = hybrid_retriever
+            
+            self._rag_engine = SimpleRAGEngine(vector_retriever, hybrid_retriever)
+            logger.info("RAG engine initialized successfully with existing knowledge base")
+            return self._rag_engine
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize RAG engine: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            self._rag_engine = None
+            return None
+    
+    def _retrieve_rag_context(self, metrics: Dict, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Retrieve relevant knowledge from RAG system.
+        
+        Args:
+            metrics: Campaign metrics dictionary
+            top_k: Number of top knowledge chunks to retrieve
+            
+        Returns:
+            List of relevant knowledge chunks with metadata
+        """
+        rag_engine = self._initialize_rag_engine()
+        if rag_engine is None:
+            logger.warning("RAG engine not available, returning empty context")
+            return []
+        
+        try:
+            # Build retrieval query from metrics
+            overview = metrics.get('overview', {})
+            platform_metrics = metrics.get('by_platform', {})
+            
+            # Construct query based on key metrics
+            query_parts = []
+            
+            # Add performance context
+            if overview.get('avg_roas'):
+                query_parts.append(f"ROAS {overview['avg_roas']:.2f}x")
+            if overview.get('avg_cpa'):
+                query_parts.append(f"CPA ${overview['avg_cpa']:.2f}")
+            if overview.get('avg_ctr'):
+                query_parts.append(f"CTR {overview['avg_ctr']:.2f}%")
+            
+            # Add platform context
+            if platform_metrics:
+                platforms = list(platform_metrics.keys())[:3]
+                query_parts.append(f"platforms: {', '.join(platforms)}")
+            
+            # Build retrieval query
+            retrieval_query = (
+                f"Digital marketing campaign optimization strategies for "
+                f"{' '.join(query_parts)}. "
+                f"Industry benchmarks, best practices, and tactical recommendations."
+            )
+            
+            logger.info(f"RAG retrieval query: {retrieval_query}")
+            
+            # Retrieve relevant knowledge using hybrid retriever (vector + keyword)
+            if hasattr(rag_engine, 'hybrid_retriever') and rag_engine.hybrid_retriever:
+                results = rag_engine.hybrid_retriever.search(retrieval_query, top_k=top_k)
+            elif hasattr(rag_engine, 'vector_retriever') and rag_engine.vector_retriever:
+                results = rag_engine.vector_retriever.search(retrieval_query, top_k=top_k)
+            else:
+                logger.warning("No retriever available in RAG engine")
+                return []
+            
+            # Format results
+            knowledge_chunks = []
+            for result in results:
+                knowledge_chunks.append({
+                    'content': result.get('text', ''),
+                    'source': result.get('metadata', {}).get('title', 'unknown'),
+                    'score': result.get('score', 0.0)
+                })
+            
+            logger.info(f"Retrieved {len(knowledge_chunks)} knowledge chunks from RAG")
+            return knowledge_chunks
+            
+        except Exception as e:
+            logger.error(f"Error retrieving RAG context: {e}")
+            return []
+    
+    def _build_rag_augmented_prompt(self, 
+                                   metrics: Dict, 
+                                   insights: List, 
+                                   recommendations: List,
+                                   rag_context: List[Dict[str, Any]]) -> str:
+        """Build prompt augmented with RAG-retrieved knowledge.
+        
+        Args:
+            metrics: Campaign metrics
+            insights: Generated insights
+            recommendations: Generated recommendations
+            rag_context: Retrieved knowledge chunks
+            
+        Returns:
+            RAG-augmented prompt string
+        """
+        # Build knowledge context section
+        knowledge_section = ""
+        if rag_context:
+            knowledge_section = "\n\n## EXTERNAL KNOWLEDGE & BENCHMARKS\n\n"
+            for idx, chunk in enumerate(rag_context, 1):
+                source = chunk.get('source', 'unknown')
+                content = chunk.get('content', '')
+                knowledge_section += f"### Source {idx}: {source}\n{content}\n\n"
+        
+        # Get base summary data (same as standard method)
+        summary_data = self._prepare_summary_data(metrics, insights, recommendations)
+        
+        # Build RAG-augmented prompt
+        prompt = f"""You are an expert digital marketing analyst with access to industry benchmarks and best practices.
+
+{knowledge_section}
+
+## CAMPAIGN DATA
+
+{json.dumps(summary_data, indent=2)}
+
+## INSTRUCTIONS
+
+Generate a comprehensive executive summary that:
+
+1. **Benchmarking**: Compare metrics against industry standards from the external knowledge above
+2. **Specific Recommendations**: Provide concrete, actionable tactics based on proven best practices
+3. **Source-Backed Insights**: Reference specific benchmarks and sources when making claims
+4. **Context-Aware**: Use platform-specific strategies from the knowledge base
+
+### BRIEF SUMMARY (3-4 sentences)
+- Start with overall performance vs benchmarks
+- Highlight 1-2 key wins with specific numbers
+- Note 1 critical optimization opportunity
+- End with highest-impact recommendation
+
+### DETAILED SUMMARY (2-3 paragraphs)
+- **Performance Analysis**: Compare all key metrics (ROAS, CPA, CTR) against industry benchmarks
+- **Platform Insights**: Analyze each platform's performance with specific tactics
+- **Optimization Roadmap**: Prioritized action plan with expected impact
+
+**CRITICAL FORMATTING RULES:**
+- NO asterisks, underscores, or markdown formatting
+- Always add space between numbers and text (e.g., "973K revenue" not "973Krevenue")
+- Use clear paragraph breaks
+- Keep it professional and data-driven
+
+Generate the executive summary now:"""
+        
+        return prompt
+    
+    def _prepare_summary_data(self, metrics: Dict, insights: List, recommendations: List) -> Dict:
+        """Prepare summary data dictionary (shared by both standard and RAG methods)."""
+        # Convert to JSON-serializable format
+        def make_serializable(obj):
+            """Convert pandas objects to JSON-serializable types."""
+            if isinstance(obj, pd.Series):
+                return obj.to_dict()
+            elif isinstance(obj, pd.DataFrame):
+                return obj.to_dict('records')
+            elif isinstance(obj, (np.integer, np.floating)):
+                return float(obj)
+            elif isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [make_serializable(item) for item in obj]
+            return obj
+        
+        overview = make_serializable(metrics.get('overview', {}))
+        platform_metrics = metrics.get('by_platform', {})
+        campaign_metrics = metrics.get('by_campaign', {})
+        
+        # Find best and worst performers
+        best_platform = None
+        worst_platform = None
+        if platform_metrics:
+            platforms_with_roas = {
+                p: m.get('roas', 0) 
+                for p, m in platform_metrics.items() 
+                if m.get('roas', 0) > 0
+            }
+            if platforms_with_roas:
+                best_platform = max(platforms_with_roas.items(), key=lambda x: x[1])
+                worst_platform = min(platforms_with_roas.items(), key=lambda x: x[1])
+        
+        summary_data = {
+            'overview': overview,
+            'best_platform': {
+                'name': best_platform[0] if best_platform else 'N/A',
+                'roas': best_platform[1] if best_platform else 0
+            },
+            'worst_platform': {
+                'name': worst_platform[0] if worst_platform else 'N/A',
+                'roas': worst_platform[1] if worst_platform else 0
+            },
+            'top_insights': insights[:5],
+            'top_recommendations': recommendations[:5],
+            'platform_count': len(platform_metrics),
+            'campaign_count': len(campaign_metrics)
+        }
+        
+        return summary_data
+    
+    def _generate_executive_summary_with_rag(self, 
+                                            metrics: Dict, 
+                                            insights: List, 
+                                            recommendations: List) -> Dict[str, str]:
+        """Generate RAG-enhanced executive summary (EXPERIMENTAL - ISOLATED METHOD).
+        
+        This method does NOT affect the existing _generate_executive_summary method.
+        It's a completely separate implementation for A/B testing.
+        
+        Args:
+            metrics: Campaign performance metrics
+            insights: List of generated insights
+            recommendations: List of recommendations
+            
+        Returns:
+            Dictionary with 'brief' and 'detailed' summaries, plus RAG metadata
+        """
+        import time
+        start_time = time.time()
+        
+        logger.info("=== GENERATING RAG-ENHANCED EXECUTIVE SUMMARY ===")
+        
+        try:
+            # Step 1: Retrieve relevant knowledge from RAG
+            logger.info("Step 1: Retrieving RAG context...")
+            rag_context = self._retrieve_rag_context(metrics, top_k=5)
+            
+            # Step 2: Build RAG-augmented prompt
+            logger.info("Step 2: Building RAG-augmented prompt...")
+            rag_prompt = self._build_rag_augmented_prompt(
+                metrics, insights, recommendations, rag_context
+            )
+            
+            # Step 3: Call LLM with RAG-augmented prompt
+            logger.info("Step 3: Calling LLM with RAG context...")
+            
+            # Use same LLM fallback logic as standard method
+            llm_response = None
+            tokens_input = 0
+            tokens_output = 0
+            model_used = "unknown"
+            
+            # Try Claude Sonnet first (if using Anthropic)
+            if self.use_anthropic and self.anthropic_api_key:
+                try:
+                    from ..utils.anthropic_helpers import call_anthropic_http
+                    result = call_anthropic_http(
+                        api_key=self.anthropic_api_key,
+                        model=self.model,
+                        messages=[{"role": "user", "content": rag_prompt}],
+                        max_tokens=4000
+                    )
+                    llm_response = result.get('content', '')
+                    tokens_input = result.get('usage', {}).get('input_tokens', 0)
+                    tokens_output = result.get('usage', {}).get('output_tokens', 0)
+                    model_used = self.model
+                    logger.info(f"RAG summary generated with Claude Sonnet ({tokens_input} + {tokens_output} tokens)")
+                except Exception as e:
+                    logger.warning(f"Claude Sonnet failed for RAG: {e}, trying Gemini...")
+            
+            # Fallback to Gemini
+            if not llm_response and self.gemini_api_key:
+                try:
+                    genai.configure(api_key=self.gemini_api_key)
+                    model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                    response = model.generate_content(rag_prompt)
+                    llm_response = response.text
+                    # Estimate tokens (Gemini doesn't provide exact counts easily)
+                    tokens_input = len(rag_prompt.split()) * 1.3
+                    tokens_output = len(llm_response.split()) * 1.3
+                    model_used = "gemini-2.0-flash-exp"
+                    logger.info(f"RAG summary generated with Gemini (~{int(tokens_input)} + {int(tokens_output)} tokens)")
+                except Exception as e:
+                    logger.warning(f"Gemini failed for RAG: {e}, trying OpenAI...")
+            
+            # Fallback to OpenAI
+            if not llm_response and self.openai_api_key:
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": rag_prompt}],
+                        max_tokens=3000,
+                        temperature=0.7
+                    )
+                    llm_response = response.choices[0].message.content
+                    tokens_input = response.usage.prompt_tokens
+                    tokens_output = response.usage.completion_tokens
+                    model_used = "gpt-4o-mini"
+                    logger.info(f"RAG summary generated with GPT-4o-mini ({tokens_input} + {tokens_output} tokens)")
+                except Exception as e:
+                    logger.error(f"All LLMs failed for RAG summary: {e}")
+                    raise
+            
+            if not llm_response:
+                raise Exception("No LLM available for RAG summary generation")
+            
+            # Step 4: Parse and format response
+            logger.info("Step 4: Parsing and formatting RAG response...")
+            brief_summary, detailed_summary = self._parse_summary_response(llm_response)
+            
+            # Apply formatting cleanup
+            brief_summary = self._strip_italics(brief_summary)
+            detailed_summary = self._strip_italics(detailed_summary)
+            
+            latency = time.time() - start_time
+            
+            logger.info(f"=== RAG SUMMARY COMPLETE in {latency:.2f}s ===")
+            
+            return {
+                'brief': brief_summary,
+                'detailed': detailed_summary,
+                'rag_metadata': {
+                    'knowledge_sources': [chunk.get('source') for chunk in rag_context],
+                    'retrieval_count': len(rag_context),
+                    'tokens_input': int(tokens_input),
+                    'tokens_output': int(tokens_output),
+                    'model': model_used,
+                    'latency': latency
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"RAG summary generation failed: {e}")
+            logger.warning("Falling back to standard summary generation")
+            # Fallback to standard method if RAG fails
+            return self._generate_executive_summary(metrics, insights, recommendations)

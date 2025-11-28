@@ -105,7 +105,13 @@ st.markdown(
     h1, h2, h3 {
         font-weight: 600;
         letter-spacing: -0.01em;
-        color: #f1f5f9;
+        color: #f1f5f9 !important;
+    }
+    
+    /* IE11 fallback for text visibility */
+    p, span, div, label {
+        color: #e2e8f0 !important;
+        opacity: 1 !important;
     }
     
     /* === LAYOUT & CONTAINERS === */
@@ -130,6 +136,14 @@ st.markdown(
     
     [data-testid="stSidebar"] * {
         color: #e2e8f0 !important;
+        opacity: 1 !important;
+    }
+    
+    /* IE11: Force text contrast */
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label {
+        color: #ffffff !important;
     }
     
     [data-testid="stSidebar"] .stMarkdown {
@@ -213,9 +227,16 @@ st.markdown(
     .exec-summary {
         font-size: 1rem;
         line-height: 1.6;
-        color: #e2e8f0;
+        color: #e2e8f0 !important;
         margin-bottom: 0;
         white-space: pre-wrap;
+        opacity: 1 !important;
+    }
+    
+    /* IE11: Force all text elements to be visible */
+    .stMarkdown, .stMarkdown p, .stMarkdown span {
+        color: #e2e8f0 !important;
+        opacity: 1 !important;
     }
     
     .quick-nav-grid {
@@ -575,6 +596,10 @@ def _strip_light_markup(text: str) -> str:
     # Add space between uppercase and lowercase when followed by uppercase (e.g., "CPAat" -> "CPA at")
     text = re.sub(r'([A-Z]{2,})([a-z])', r'\1 \2', text)
     
+    # Fix formatting issues with lines starting with numbers (e.g., "1.Platform" -> "1. Platform")
+    text = re.sub(r'^(\d+)\.([A-Z])', r'\1. \2', text, flags=re.MULTILINE)
+    text = re.sub(r'\n(\d+)\.([A-Z])', r'\n\1. \2', text)
+    
     return text
 
 
@@ -765,7 +790,7 @@ def load_sample_campaign_data() -> Tuple[Optional[pd.DataFrame], Optional[str]]:
 with st.sidebar:
     st.image(
         "https://via.placeholder.com/220x80/667eea/ffffff?text=PCA+Agent",
-        use_container_width=True,
+        width="stretch",
     )
     st.markdown("---")
 
@@ -781,7 +806,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    if st.button("🔄 Reset Workspace", use_container_width=True):
+    if st.button("🔄 Reset Workspace", width="stretch"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         if os.path.exists(LAST_CSV_PATH):
@@ -804,7 +829,7 @@ with st.sidebar:
         st.metric("Interp. Accuracy", f"{metrics['interpretation_accuracy']:.1f}%")
     st.metric("Avg Response Time", f"{metrics['avg_execution_time_ms']:.0f} ms")
 
-    if st.button("📥 Export Query Logs", use_container_width=True):
+    if st.button("📥 Export Query Logs", width="stretch"):
         export_path = st.session_state.query_tracker.export_to_csv()
         st.success(f"Exported to {export_path}")
 
@@ -842,7 +867,7 @@ with tab_auto:
     with col_upload:
         input_method = st.radio(
             "Choose Input Method",
-            options=["📊 CSV Data", "📸 Dashboard Screenshots"],
+            options=["📊 CSV Data", "🗄️ Database", "📸 Dashboard Screenshots"],
             horizontal=True,
         )
     with col_tip:
@@ -910,7 +935,7 @@ with tab_auto:
                             st.markdown("\n".join(mapping_info))
 
                     with st.expander("📋 Data Preview", expanded=True):
-                        st.dataframe(df.head(10), use_container_width=True)
+                        st.dataframe(df.head(10), width="stretch")
                         col_a, col_b, col_c, col_d = st.columns(4)
 
                         # Basic row count
@@ -955,7 +980,7 @@ with tab_auto:
                 )
 
                 with st.expander("📋 Data Preview", expanded=True):
-                    st.dataframe(df.head(10), use_container_width=True)
+                    st.dataframe(df.head(10), width="stretch")
                     col_a, col_b, col_c, col_d = st.columns(4)
 
                     col_a.metric("Rows", len(df))
@@ -988,6 +1013,451 @@ with tab_auto:
                         st.session_state.analysis_complete = True
                         st.rerun()
 
+        elif input_method == "🗄️ Database":
+            from src.data.database_connector import DatabaseConnector
+            
+            st.markdown("### 🗄️ Connect to Database")
+            
+            # Database type selection with categories
+            db_category = st.radio(
+                "Database Category",
+                options=["Traditional Databases", "Cloud Data Warehouses", "Cloud Storage"],
+                horizontal=True
+            )
+            
+            if db_category == "Traditional Databases":
+                db_options = {
+                    "postgresql": "PostgreSQL",
+                    "mysql": "MySQL",
+                    "sqlite": "SQLite",
+                    "mssql": "SQL Server"
+                }
+            elif db_category == "Cloud Data Warehouses":
+                db_options = {
+                    "duckdb": "DuckDB",
+                    "snowflake": "Snowflake",
+                    "bigquery": "Google BigQuery",
+                    "redshift": "AWS Redshift",
+                    "databricks": "Databricks"
+                }
+            else:  # Cloud Storage
+                db_options = {
+                    "s3": "AWS S3",
+                    "azure_blob": "Azure Blob Storage",
+                    "gcs": "Google Cloud Storage"
+                }
+            
+            db_type = st.selectbox(
+                "Select Database/Storage",
+                options=list(db_options.keys()),
+                format_func=lambda x: db_options.get(x, x)
+            )
+            
+            # Connection parameters based on database type
+            if db_type in ["sqlite", "duckdb"]:
+                file_path = st.text_input("Database File Path", placeholder="path/to/database.db" if db_type == "sqlite" else ":memory: or path/to/database.duckdb")
+                
+                if st.button(f"🔌 Connect to {db_type.upper()}"):
+                    if file_path or db_type == "duckdb":
+                        try:
+                            with st.spinner("Connecting to database..."):
+                                connector = DatabaseConnector()
+                                connector.connect(db_type=db_type, file_path=file_path or ":memory:")
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success(f"✅ Connected to {db_type.upper()} database!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please provide database file path")
+            
+            elif db_type == "snowflake":
+                col1, col2 = st.columns(2)
+                with col1:
+                    account = st.text_input("Account", placeholder="xy12345.us-east-1")
+                    database = st.text_input("Database", placeholder="CAMPAIGN_DB")
+                    warehouse = st.text_input("Warehouse", placeholder="COMPUTE_WH")
+                with col2:
+                    username = st.text_input("Username", placeholder="user")
+                    password = st.text_input("Password", type="password")
+                    schema = st.text_input("Schema", value="PUBLIC")
+                
+                if st.button("🔌 Connect to Snowflake"):
+                    if all([account, database, username, password, warehouse]):
+                        try:
+                            with st.spinner("Connecting to Snowflake..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="snowflake",
+                                    host=None,
+                                    database=database,
+                                    username=username,
+                                    password=password,
+                                    account=account,
+                                    warehouse=warehouse,
+                                    schema=schema
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Snowflake!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all required fields")
+            
+            elif db_type == "bigquery":
+                project_id = st.text_input("Project ID", placeholder="my-project-123")
+                credentials_path = st.text_input("Credentials JSON Path (optional)", placeholder="path/to/credentials.json")
+                
+                if st.button("🔌 Connect to BigQuery"):
+                    if project_id:
+                        try:
+                            with st.spinner("Connecting to BigQuery..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="bigquery",
+                                    database=project_id,
+                                    project_id=project_id,
+                                    credentials_path=credentials_path if credentials_path else None
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to BigQuery!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please provide Project ID")
+            
+            elif db_type == "databricks":
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="dbc-xyz.cloud.databricks.com")
+                    http_path = st.text_input("HTTP Path", placeholder="/sql/1.0/warehouses/abc123")
+                with col2:
+                    token = st.text_input("Access Token", type="password")
+                    catalog = st.text_input("Catalog", value="main")
+                
+                if st.button("🔌 Connect to Databricks"):
+                    if all([host, http_path, token, catalog]):
+                        try:
+                            with st.spinner("Connecting to Databricks..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="databricks",
+                                    host=host,
+                                    database=catalog,
+                                    password=token,
+                                    http_path=http_path,
+                                    token=token
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Databricks!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all required fields")
+            
+            elif db_type in ["s3", "azure_blob", "gcs"]:
+                # Cloud storage - handle differently (no connection, direct file load)
+                st.info("Cloud storage requires direct file path. Enter details below to load data.")
+                st.session_state.db_type = db_type
+                st.session_state.db_connected = True  # Mark as "connected" to show file selection
+            
+            elif db_type == "redshift":
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="cluster.region.redshift.amazonaws.com")
+                    database = st.text_input("Database", placeholder="dev")
+                with col2:
+                    port = st.number_input("Port", value=5439, min_value=1, max_value=65535)
+                    username = st.text_input("Username", placeholder="admin")
+                
+                password = st.text_input("Password", type="password")
+                
+                if st.button("🔌 Connect to Redshift"):
+                    if all([host, database, username, password]):
+                        try:
+                            with st.spinner("Connecting to Redshift..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type="redshift",
+                                    host=host,
+                                    port=port,
+                                    database=database,
+                                    username=username,
+                                    password=password
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success("✅ Connected to Redshift!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all connection fields")
+            
+            else:
+                # Server-based databases
+                col1, col2 = st.columns(2)
+                with col1:
+                    host = st.text_input("Host", placeholder="localhost")
+                    database = st.text_input("Database Name", placeholder="campaign_data")
+                with col2:
+                    port = st.number_input("Port", value={
+                        "postgresql": 5432,
+                        "mysql": 3306,
+                        "mssql": 1433
+                    }.get(db_type, 5432), min_value=1, max_value=65535)
+                    
+                col3, col4 = st.columns(2)
+                with col3:
+                    username = st.text_input("Username", placeholder="user")
+                with col4:
+                    password = st.text_input("Password", type="password", placeholder="password")
+                
+                if st.button(f"🔌 Connect to {db_type.upper()}"):
+                    if all([host, database, username, password]):
+                        try:
+                            with st.spinner("Connecting to database..."):
+                                connector = DatabaseConnector()
+                                connector.connect(
+                                    db_type=db_type,
+                                    host=host,
+                                    port=port,
+                                    database=database,
+                                    username=username,
+                                    password=password
+                                )
+                                st.session_state.db_connector = connector
+                                st.session_state.db_connected = True
+                                st.success(f"✅ Connected to {db_type.upper()} database!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {str(e)}")
+                    else:
+                        st.warning("Please fill in all connection fields")
+            
+            # Show table selection if connected
+            if st.session_state.get('db_connected', False):
+                st.markdown("---")
+                st.markdown("### 📊 Select Data")
+                
+                # Handle cloud storage differently
+                if st.session_state.get('db_type') in ["s3", "azure_blob", "gcs"]:
+                    storage_type = st.session_state.get('db_type')
+                    connector = DatabaseConnector()
+                    
+                    if storage_type == "s3":
+                        s3_path = st.text_input("S3 Path", placeholder="s3://bucket-name/path/to/file.csv")
+                        aws_access_key = st.text_input("AWS Access Key (optional)")
+                        aws_secret_key = st.text_input("AWS Secret Key (optional)", type="password")
+                        region = st.text_input("Region", value="us-east-1")
+                        
+                        if st.button("📥 Load from S3"):
+                            if s3_path:
+                                try:
+                                    with st.spinner("Loading from S3..."):
+                                        df = connector.load_from_s3(
+                                            s3_path=s3_path,
+                                            aws_access_key_id=aws_access_key if aws_access_key else None,
+                                            aws_secret_access_key=aws_secret_key if aws_secret_key else None,
+                                            region_name=region
+                                        )
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        st.success(f"✅ Loaded {len(df)} rows from S3")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load from S3: {str(e)}")
+                            else:
+                                st.warning("Please provide S3 path")
+                    
+                    elif storage_type == "azure_blob":
+                        container = st.text_input("Container Name", placeholder="my-container")
+                        blob_name = st.text_input("Blob Name", placeholder="path/to/file.csv")
+                        
+                        auth_method = st.radio("Authentication", ["Connection String", "Account Key"])
+                        
+                        if auth_method == "Connection String":
+                            conn_str = st.text_input("Connection String", type="password")
+                            account_name = None
+                            account_key = None
+                        else:
+                            conn_str = None
+                            account_name = st.text_input("Account Name")
+                            account_key = st.text_input("Account Key", type="password")
+                        
+                        if st.button("📥 Load from Azure"):
+                            if container and blob_name:
+                                try:
+                                    with st.spinner("Loading from Azure..."):
+                                        df = connector.load_from_azure_blob(
+                                            container_name=container,
+                                            blob_name=blob_name,
+                                            connection_string=conn_str,
+                                            account_name=account_name,
+                                            account_key=account_key
+                                        )
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        st.success(f"✅ Loaded {len(df)} rows from Azure")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load from Azure: {str(e)}")
+                            else:
+                                st.warning("Please provide container and blob name")
+                    
+                    elif storage_type == "gcs":
+                        bucket_name = st.text_input("Bucket Name", placeholder="my-bucket")
+                        blob_name = st.text_input("Blob Name", placeholder="path/to/file.csv")
+                        credentials_path = st.text_input("Credentials JSON Path (optional)", placeholder="path/to/credentials.json")
+                        
+                        if st.button("📥 Load from GCS"):
+                            if bucket_name and blob_name:
+                                try:
+                                    with st.spinner("Loading from GCS..."):
+                                        df = connector.load_from_gcs(
+                                            bucket_name=bucket_name,
+                                            blob_name=blob_name,
+                                            credentials_path=credentials_path if credentials_path else None
+                                        )
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        st.success(f"✅ Loaded {len(df)} rows from GCS")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load from GCS: {str(e)}")
+                            else:
+                                st.warning("Please provide bucket and blob name")
+                    
+                    # Show loaded data preview
+                    if 'df' in st.session_state and st.session_state.df is not None:
+                        df = st.session_state.df
+                        st.markdown("---")
+                        st.markdown("### 📊 Data Preview")
+                        st.dataframe(df.head(10), width="stretch")
+                        
+                        # Show metrics
+                        col_a, col_b, col_c, col_d = st.columns(4)
+                        col_a.metric("Rows", f"{len(df):,}")
+                        col_b.metric("Columns", len(df.columns))
+                        
+                        if "Spend" in df.columns:
+                            total_spend = df["Spend"].sum()
+                            col_d.metric("Total Spend", f"${total_spend:,.0f}")
+                        
+                        st.markdown("---")
+                        if st.button("🚀 Analyze Data & Generate Insights", type="primary", key="analyze_cloud"):
+                            with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                                expert = MediaAnalyticsExpert()
+                                analysis = expert.analyze_all(df)
+                                st.session_state.analysis_data = analysis
+                                st.session_state.analysis_complete = True
+                                st.rerun()
+                
+                else:
+                    # Database connection (not cloud storage)
+                    connector = st.session_state.db_connector
+                    
+                    # Get tables
+                    try:
+                        tables = connector.get_tables()
+                        
+                        data_source = st.radio(
+                            "Data Source",
+                            options=["📋 Select Table", "✍️ Custom Query"],
+                            horizontal=True
+                        )
+                        
+                        if data_source == "📋 Select Table":
+                            selected_table = st.selectbox("Select Table", options=tables)
+                            
+                            # Show schema
+                            if st.checkbox("Show Table Schema"):
+                                schema = connector.get_table_schema(selected_table)
+                                st.dataframe(schema, width="stretch")
+                            
+                            # Row limit
+                            limit = st.number_input("Row Limit (0 = all rows)", min_value=0, value=10000, step=1000)
+                            
+                            if st.button("📥 Load Data from Table"):
+                                try:
+                                    with st.spinner(f"Loading data from {selected_table}..."):
+                                        if limit > 0:
+                                            df = connector.load_table(selected_table, limit=limit)
+                                        else:
+                                            df = connector.load_table(selected_table)
+                                        
+                                        # Normalize column names
+                                        df = normalize_campaign_dataframe(df)
+                                        st.session_state.df = df
+                                        
+                                        st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to load data: {str(e)}")
+                        
+                        else:  # Custom Query
+                            query = st.text_area(
+                                "SQL Query",
+                                placeholder="SELECT * FROM campaigns WHERE date >= '2024-01-01'",
+                                height=150
+                            )
+                            
+                            if st.button("▶️ Execute Query"):
+                                if query.strip():
+                                    try:
+                                        with st.spinner("Executing query..."):
+                                            df = connector.execute_query(query)
+                                            
+                                            # Normalize column names
+                                            df = normalize_campaign_dataframe(df)
+                                            st.session_state.df = df
+                                            
+                                            st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                                            st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Query failed: {str(e)}")
+                                else:
+                                    st.warning("Please enter a SQL query")
+                        
+                        # Show loaded data preview
+                        if 'df' in st.session_state and st.session_state.df is not None:
+                            df = st.session_state.df
+                            st.markdown("---")
+                            st.markdown("### 📊 Data Preview")
+                            st.dataframe(df.head(10), width="stretch")
+                            
+                            # Show metrics
+                            col_a, col_b, col_c, col_d = st.columns(4)
+                            col_a.metric("Rows", f"{len(df):,}")
+                            col_b.metric("Columns", len(df.columns))
+                            
+                            if "Spend" in df.columns:
+                                total_spend = df["Spend"].sum()
+                                col_d.metric("Total Spend", f"${total_spend:,.0f}")
+                            
+                            st.markdown("---")
+                            if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
+                                with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                                    expert = MediaAnalyticsExpert()
+                                    analysis = expert.analyze_all(df)
+                                    st.session_state.analysis_data = analysis
+                                    st.session_state.analysis_complete = True
+                                    st.rerun()
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+                        if st.button("🔌 Reconnect"):
+                            st.session_state.db_connected = False
+                            st.session_state.db_connector = None
+                            st.rerun()
+
         else:
             st.warning(
                 "Screenshot ingestion requires the backend vision pipeline. "
@@ -1015,7 +1485,7 @@ with tab_auto:
         
         # Show data preview at the top after analysis
         with st.expander("📋 Loaded Data Preview", expanded=False):
-            st.dataframe(df.head(20), use_container_width=True)
+            st.dataframe(df.head(20), width="stretch")
             col_a, col_b, col_c, col_d = st.columns(4)
             
             col_a.metric("Rows", len(df))
@@ -1052,7 +1522,16 @@ with tab_auto:
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
         
         st.markdown("<div id='executive-summary'></div>", unsafe_allow_html=True)
-        st.markdown("## 📊 Executive Summary")
+        
+        # RAG Comparison Toggle
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown("## 📊 Executive Summary")
+        with col2:
+            enable_rag_comparison = st.toggle("🔬 Compare with RAG", value=False, help="Generate RAG-enhanced summary for comparison")
+        with col3:
+            if enable_rag_comparison:
+                st.caption("🧪 Experimental")
         
         exec_summary_raw = analysis.get("executive_summary")
         
@@ -1071,25 +1550,184 @@ with tab_auto:
         else:
             logger.warning("⚠️ No executive summary found in analysis results")
         
-        # Show brief summary
-        if brief_summary:
-            st.markdown(brief_summary)
-        else:
-            # Fallback to highlights if LLM failed
-            st.warning("⚠️ Executive summary generation failed. Showing key highlights instead:")
-            highlights = _build_key_highlights(analysis)
-            if highlights:
-                for point in highlights:
-                    st.markdown(f"• {point}")
-            else:
-                st.error("Unable to generate executive summary or highlights. Check API keys and try again.")
+        # Generate RAG summary if comparison enabled
+        rag_brief_summary = None
+        rag_detailed_summary = None
+        rag_metadata = None
+        campaign_id = st.session_state.get('selected_campaign', 'all_campaigns')
         
-        # Show detailed summary in an expander
-        if detailed_summary:
-            with st.expander("📄 View Detailed Executive Summary", expanded=False):
-                st.markdown(detailed_summary)
+        if enable_rag_comparison and brief_summary:
+            try:
+                with st.spinner("🔬 Generating RAG-enhanced summary..."):
+                    from src.utils.comparison_logger import ComparisonLogger
+                    import uuid
+                    import time
+                    
+                    # Create analyzer instance for RAG
+                    analyzer = MediaAnalyticsExpert()
+                    
+                    # Generate RAG summary
+                    metrics = analysis.get("metrics", {})
+                    insights = analysis.get("insights", [])
+                    recommendations = analysis.get("recommendations", [])
+                    
+                    start_time = time.time()
+                    rag_result = analyzer._generate_executive_summary_with_rag(metrics, insights, recommendations)
+                    rag_latency = time.time() - start_time
+                    
+                    if isinstance(rag_result, dict):
+                        rag_brief_summary = _strip_light_markup(rag_result.get("brief", ""))
+                        rag_detailed_summary = _strip_light_markup(rag_result.get("detailed", ""))
+                        rag_metadata = rag_result.get("rag_metadata", {})
+                        
+                        # Log comparison
+                        session_id = st.session_state.get('session_id', str(uuid.uuid4())[:8])
+                        
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_comparison(
+                            session_id=session_id,
+                            campaign_id=campaign_id,
+                            standard_result={
+                                'summary_brief': brief_summary,
+                                'summary_detailed': detailed_summary,
+                                'tokens_input': 2500,  # Estimated
+                                'tokens_output': len(brief_summary.split()) * 1.3,
+                                'cost': 0.015,
+                                'latency': 2.5,
+                                'model': 'standard'
+                            },
+                            rag_result={
+                                'summary_brief': rag_brief_summary,
+                                'summary_detailed': rag_detailed_summary,
+                                'tokens_input': rag_metadata.get('tokens_input', 0),
+                                'tokens_output': rag_metadata.get('tokens_output', 0),
+                                'cost': 0.022,
+                                'latency': rag_latency,
+                                'model': rag_metadata.get('model', 'unknown'),
+                                'knowledge_sources': rag_metadata.get('knowledge_sources', [])
+                            }
+                        )
+                        
+                        logger.info(f"✅ RAG comparison generated and logged (session: {session_id})")
+            except Exception as e:
+                logger.error(f"❌ RAG comparison failed: {e}")
+                st.error(f"RAG comparison failed: {str(e)}")
+        
+        # Display summaries
+        if enable_rag_comparison and rag_brief_summary:
+            # Side-by-side comparison
+            st.markdown("### 📊 Comparison View")
+            
+            col_standard, col_rag = st.columns(2)
+            
+            with col_standard:
+                st.markdown("#### 📄 Standard Summary")
+                st.info(brief_summary)
+                
+                if detailed_summary:
+                    with st.expander("📄 View Detailed", expanded=False):
+                        st.markdown(detailed_summary)
+            
+            with col_rag:
+                st.markdown("#### 🔬 RAG-Enhanced Summary")
+                st.success(rag_brief_summary)
+                
+                if rag_metadata:
+                    st.caption(f"🧠 Knowledge sources: {rag_metadata.get('retrieval_count', 0)} | "
+                             f"⏱️ {rag_metadata.get('latency', 0):.1f}s | "
+                             f"💰 +{((rag_metadata.get('tokens_input', 0) / 2500 - 1) * 100):.0f}% tokens")
+                
+                if rag_detailed_summary:
+                    with st.expander("📄 View Detailed", expanded=False):
+                        st.markdown(rag_detailed_summary)
+            
+            # Feedback section
+            st.markdown("---")
+            st.markdown("#### 💬 Which summary do you prefer?")
+            
+            feedback_col1, feedback_col2, feedback_col3, feedback_col4 = st.columns([1, 1, 1, 2])
+            
+            with feedback_col1:
+                if st.button("👍 Standard", key="prefer_standard"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='standard',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User preferred standard summary"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+            
+            with feedback_col2:
+                if st.button("👍 RAG-Enhanced", key="prefer_rag"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='rag',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User preferred RAG-enhanced summary"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+            
+            with feedback_col3:
+                if st.button("🤷 Same Quality", key="prefer_same"):
+                    try:
+                        comparison_logger = ComparisonLogger()
+                        comparison_logger.log_feedback(
+                            session_id=st.session_state.get('session_id', 'unknown'),
+                            campaign_id=campaign_id,
+                            user_preference='same',
+                            quality_rating=None,
+                            usefulness_rating=None,
+                            comments="User found both summaries equally good"
+                        )
+                        st.success("✅ Feedback recorded!")
+                    except Exception as e:
+                        logger.error(f"Failed to log feedback: {e}")
+        
+        else:
+            # Standard display (no comparison)
+            if brief_summary:
+                st.markdown(brief_summary)
+            else:
+                # Fallback to highlights if LLM failed
+                st.warning("⚠️ Executive summary generation failed. Showing key highlights instead:")
+                highlights = _build_key_highlights(analysis)
+                if highlights:
+                    for point in highlights:
+                        st.markdown(f"• {point}")
+                else:
+                    st.error("Unable to generate executive summary or highlights. Check API keys and try again.")
+            
+            # Show detailed summary in an expander
+            if detailed_summary:
+                with st.expander("📄 View Detailed Executive Summary", expanded=False):
+                    st.markdown(detailed_summary)
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        
+        # Display data quality warnings for ROAS/Revenue
+        roas_analysis = analysis.get("roas_revenue_analysis", {})
+        data_quality = roas_analysis.get("data_quality", {})
+        missing_warning = data_quality.get("missing_data_warning")
+        zero_roas_count = data_quality.get("zero_roas_count", 0)
+        
+        if missing_warning or zero_roas_count > 0:
+            st.markdown("### ⚠️ Data Quality Notices")
+            if missing_warning:
+                st.warning(f"**Revenue Data:** {missing_warning}")
+            if zero_roas_count > 0:
+                st.info(f"📊 **Note:** {zero_roas_count} records with zero ROAS were excluded from revenue analysis to ensure accurate metrics.")
 
         st.markdown("<div id='overview'></div>", unsafe_allow_html=True)
         st.markdown("## 🧭 Overview")
@@ -1200,7 +1838,8 @@ with tab_auto:
             df_line = df_mgmt.copy()
             df_line["Date"] = pd.to_datetime(df_line["Date"], errors="coerce")
             df_line = df_line.dropna(subset=["Date"])
-            df_line["Week"] = df_line["Date"].dt.to_period('W').astype(str)
+            # Use week start date only (Monday)
+            df_line["Week"] = df_line["Date"].dt.to_period('W').dt.start_time.dt.strftime('%Y-%m-%d')
             
             # Build aggregation for weekly data
             weekly_agg = {}
@@ -1237,7 +1876,7 @@ with tab_auto:
                     fig.update_yaxes(title_text=f"<b>{conv_col_mgmt}</b>", secondary_y=True)
                 fig.update_layout(title_text="Weekly Performance", height=400)
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
         st.markdown("<div id='key-performance-metrics'></div>", unsafe_allow_html=True)
         st.markdown("## 📈 Key Performance Metrics")
@@ -1335,16 +1974,39 @@ with tab_auto:
                 fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
                 fig.update_layout(title_text=f"Channel Performance: {metric1} vs {metric2}", height=400)
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         
-        # 2. Month-Year Trend Analysis (Dual-Axis with Dynamic Metric Selection)
+        # 2. Adaptive Time Trend Analysis (Monthly/Weekly/Daily based on data)
         if has_date and spend_col:
-            st.markdown("### 📅 Monthly Trend Analysis")
-            
             df_trend = df.copy()
             df_trend['Date'] = pd.to_datetime(df_trend['Date'], errors='coerce')
             df_trend = df_trend.dropna(subset=['Date'])
-            df_trend['Month_Year'] = df_trend['Date'].dt.to_period('M').astype(str)
+            
+            # Determine optimal time granularity based on data span
+            date_range = (df_trend['Date'].max() - df_trend['Date'].min()).days
+            unique_dates = df_trend['Date'].nunique()
+            
+            if date_range <= 60 and unique_dates >= 7:
+                # Less than 2 months with daily data -> use Daily
+                time_granularity = 'Daily'
+                df_trend['Time_Period'] = df_trend['Date'].dt.strftime('%Y-%m-%d')
+                period_label = 'Day'
+            elif date_range <= 180 and unique_dates >= 12:
+                # Less than 6 months with weekly data -> use Weekly
+                time_granularity = 'Weekly'
+                df_trend['Time_Period'] = df_trend['Date'].dt.to_period('W').apply(lambda r: r.start_time.strftime('%Y-%m-%d'))
+                period_label = 'Week'
+            else:
+                # Default to Monthly for longer periods
+                time_granularity = 'Monthly'
+                df_trend['Time_Period'] = df_trend['Date'].dt.to_period('M').astype(str)
+                period_label = 'Month'
+            
+            # Keep Month_Year for backward compatibility
+            df_trend['Month_Year'] = df_trend['Time_Period']
+            
+            st.markdown(f"### 📅 {time_granularity} Trend Analysis")
+            st.caption(f"📊 Auto-detected granularity: **{time_granularity}** (Date range: {date_range} days, {unique_dates} unique dates)")
 
             # Optional dimension filtering (Campaign, Placement, Funnel, Creative, Audience, etc.)
             dimension_map = [
@@ -1457,7 +2119,7 @@ with tab_auto:
                 fig.update_yaxes(title_text=f"<b>{metric2}</b>", secondary_y=True)
                 fig.update_layout(title_text="Monthly Performance Trends", height=400)
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         
         # 3. Funnel Analysis - CLEARLY DENOTE AWARENESS, CONSIDERATION & CONVERSION
         if has_date and clicks_col and conv_col:
@@ -1520,113 +2182,185 @@ with tab_auto:
                     "Conversion": "#10b981"      # Green - Bottom of funnel
                 }
 
+                # Store original column name before normalization
+                funnel_stage_col_original = funnel_stage_col
+                
+                # Map funnel stage values to standard names (case-insensitive)
+                def normalize_funnel_stage(stage):
+                    stage_str = str(stage).strip().lower()
+                    # Awareness keywords - expanded (including "upper")
+                    if any(x in stage_str for x in ['aware', 'awareness', 'top', 'upper', 'impression', 'reach', 'brand', 'discovery', 'tofu']):
+                        return 'Awareness'
+                    # Conversion keywords - check BEFORE consideration to avoid false matches (including "lower")
+                    elif any(x in stage_str for x in ['convert', 'conversion', 'bottom', 'lower', 'action', 'purchase', 'lead', 'bofu', 'sale', 'acquisition']):
+                        return 'Conversion'
+                    # Consideration keywords
+                    elif any(x in stage_str for x in ['consider', 'consideration', 'middle', 'mid', 'interest', 'engagement', 'mofu', 'evaluation']):
+                        return 'Consideration'
+                    return stage  # Keep original if no match
+                
+                stage_monthly['Normalized_Stage'] = stage_monthly[funnel_stage_col].apply(normalize_funnel_stage)
+                
+                # Debug: Show original vs normalized stages with detailed mapping
+                original_stages = stage_monthly[funnel_stage_col_original].unique()
+                normalized_stages_before = stage_monthly['Normalized_Stage'].unique()
+                
+                # Create detailed mapping report
+                mapping_details = []
+                for orig in original_stages:
+                    norm = normalize_funnel_stage(orig)
+                    count = len(stage_monthly[stage_monthly[funnel_stage_col_original] == orig])
+                    mapping_details.append(f"  • '{orig}' → '{norm}' ({count} records)")
+                
+                st.info(f"🔍 **Funnel Stage Mapping:**\n\n"
+                       f"Original stages found: {', '.join(map(str, original_stages))}\n\n"
+                       f"Detailed mapping:\n" + "\n".join(mapping_details) + "\n\n"
+                       f"Normalized stages before filter: {', '.join(map(str, normalized_stages_before))}")
+                
                 # Filter data to only include the three main funnel stages
-                stage_monthly = stage_monthly[stage_monthly[funnel_stage_col].isin(stage_order)]
+                records_before = len(stage_monthly)
+                stage_monthly = stage_monthly[stage_monthly['Normalized_Stage'].isin(stage_order)]
+                records_after = len(stage_monthly)
+                normalized_stages_after = stage_monthly['Normalized_Stage'].unique()
+                
+                st.caption(f"📊 Filter results: {records_before} records → {records_after} records | "
+                          f"Stages after filter: {', '.join(map(str, normalized_stages_after))}")
+                
+                # Use normalized stage for grouping
+                funnel_stage_col = 'Normalized_Stage'
 
-                # Add traces for each funnel stage
-                for stage in stage_order:
-                    stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
-                    if stage_subset.empty:
-                        continue
+                # Check if we have any data after normalization
+                if stage_monthly.empty:
+                    st.warning(f"⚠️ No data matched the standard funnel stages after normalization. Original stages found: {', '.join(map(str, unique_funnels))}")
+                else:
+                    # Debug: Show data availability per stage
+                    st.caption("📈 **Data availability per stage:**")
+                    for stage in stage_order:
+                        stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                        if not stage_subset.empty:
+                            ctr_valid = stage_subset['CTR'].notna().sum()
+                            conv_valid = stage_subset['Conversions'].notna().sum()
+                            st.caption(f"  • {stage}: {len(stage_subset)} records | CTR: {ctr_valid} valid | Conversions: {conv_valid} valid")
                     
-                    color = color_map[stage]
-                    emoji = stage_emojis[stage]
-                    
-                    # Primary metric: CTR (solid line with markers)
-                    fig.add_trace(
-                        go.Scatter(
-                            x=stage_subset['Month_Year'],
-                            y=stage_subset['CTR'],
-                            name=f"{emoji} {stage} - CTR",
-                            mode='lines+markers',
-                            line=dict(color=color, width=3.5),
-                            marker=dict(size=10, symbol='circle'),
-                            legendgroup=stage,
-                            hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                    # Add traces for each funnel stage
+                    for stage in stage_order:
+                        stage_subset = stage_monthly[stage_monthly[funnel_stage_col] == stage]
+                        if stage_subset.empty:
+                            st.caption(f"⚠️ No data for {stage}")
+                            continue
+                        
+                        color = color_map[stage]
+                        emoji = stage_emojis[stage]
+                        
+                        # Primary metric: CTR (solid line with markers)
+                        # Only add trace if we have valid CTR data
+                        if stage_subset['CTR'].notna().any():
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=stage_subset['Month_Year'],
+                                    y=stage_subset['CTR'],
+                                    name=f"{emoji} {stage} - CTR",
+                                    mode='lines+markers',
+                                    line=dict(color=color, width=3.5),
+                                    marker=dict(size=10, symbol='circle'),
+                                    legendgroup=stage,
+                                    connectgaps=True,  # Connect lines even with missing data
+                                    hovertemplate=f'<b>{stage}</b><br>CTR: %{{y:.2f}}%<extra></extra>'
+                                ),
+                                secondary_y=False
+                            )
+                        
+                        # Secondary metric: Conversions (dashed line)
+                        # Only add trace if we have valid Conversions data
+                        if stage_subset['Conversions'].notna().any():
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=stage_subset['Month_Year'],
+                                    y=stage_subset['Conversions'],
+                                    name=f"{emoji} {stage} - Conversions",
+                                    mode='lines+markers',
+                                    line=dict(color=color, width=2.5, dash='dot'),
+                                    marker=dict(size=8, symbol='diamond'),
+                                    legendgroup=stage,
+                                    connectgaps=True,  # Connect lines even with missing data
+                                    hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
+                                ),
+                                secondary_y=True
+                            )
+
+                    # Update layout with clear funnel stage indicators
+                    fig.update_layout(
+                        title={
+                            'text': '🔄 Funnel Performance: Awareness → Consideration → Conversion',
+                            'x': 0.5,
+                            'xanchor': 'center',
+                            'font': {'size': 16, 'color': '#e2e8f0'}
+                        },
+                        xaxis_title='Month',
+                        hovermode='x unified',
+                        height=450,
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.02,
+                            bgcolor='rgba(30, 41, 59, 0.8)',
+                            bordercolor='rgba(148, 163, 184, 0.3)',
+                            borderwidth=1
                         ),
-                        secondary_y=False
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
                     )
                     
-                    # Secondary metric: Conversions (dashed line)
-                    fig.add_trace(
-                        go.Scatter(
-                            x=stage_subset['Month_Year'],
-                            y=stage_subset['Conversions'],
-                            name=f"{emoji} {stage} - Conversions",
-                            mode='lines+markers',
-                            line=dict(color=color, width=2.5, dash='dot'),
-                            marker=dict(size=8, symbol='diamond'),
-                            legendgroup=stage,
-                            hovertemplate=f'<b>{stage}</b><br>Conversions: %{{y:,.0f}}<extra></extra>'
-                        ),
-                        secondary_y=True
+                    # Update axes with clear labels
+                    fig.update_yaxes(
+                        title_text='<b>CTR (%)</b>', 
+                        secondary_y=False,
+                        showgrid=True,
+                        gridcolor='rgba(128,128,128,0.2)'
+                    )
+                    fig.update_yaxes(
+                        title_text='<b>Conversions</b>', 
+                        secondary_y=True,
+                        showgrid=False
+                    )
+                    fig.update_xaxes(
+                        showgrid=True,
+                        gridcolor='rgba(128,128,128,0.2)'
                     )
 
-                # Update layout with clear funnel stage indicators
-                fig.update_layout(
-                    title={
-                        'text': '🔄 Funnel Performance: Awareness → Consideration → Conversion',
-                        'x': 0.5,
-                        'xanchor': 'center',
-                        'font': {'size': 16, 'color': '#e2e8f0'}
-                    },
-                    xaxis_title='Month',
-                    hovermode='x unified',
-                    height=450,
-                    legend=dict(
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        xanchor="left",
-                        x=1.02,
-                        bgcolor='rgba(30, 41, 59, 0.8)',
-                        bordercolor='rgba(148, 163, 184, 0.3)',
-                        borderwidth=1
-                    ),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                )
-                
-                # Update axes with clear labels
-                fig.update_yaxes(
-                    title_text='<b>CTR (%)</b>', 
-                    secondary_y=False,
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.2)'
-                )
-                fig.update_yaxes(
-                    title_text='<b>Conversions</b>', 
-                    secondary_y=True,
-                    showgrid=False
-                )
-                fig.update_xaxes(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.2)'
-                )
-
-                # Add summary metrics for each funnel stage BEFORE chart
-                st.markdown("#### 📊 Funnel Stage Summary")
-                funnel_cols = st.columns(3)
-                
-                for idx, stage in enumerate(stage_order):
-                    stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
-                    if not stage_data.empty:
+                    # Add summary metrics for each funnel stage BEFORE chart
+                    st.markdown("#### 📊 Funnel Stage Summary")
+                    funnel_cols = st.columns(3)
+                    
+                    # Display all three stages
+                    for idx, stage in enumerate(stage_order):
+                        stage_data = stage_monthly[stage_monthly[funnel_stage_col] == stage]
                         with funnel_cols[idx]:
                             emoji = stage_emojis[stage]
-                            avg_ctr = stage_data['CTR'].mean()
-                            total_conv = stage_data['Conversions'].sum()
-                            
-                            st.markdown(f"**{emoji} {stage}**")
-                            st.metric("Avg CTR", f"{avg_ctr:.2f}%" if not pd.isna(avg_ctr) else "N/A")
-                            st.metric("Total Conversions", f"{total_conv:,.0f}" if not pd.isna(total_conv) else "N/A")
-                            
-                            if 'CPA' in stage_data.columns:
-                                avg_cpa = stage_data['CPA'].mean()
-                                if not pd.isna(avg_cpa):
-                                    st.metric("Avg CPA", f"${avg_cpa:.2f}")
-                
-                # Show the chart
-                st.plotly_chart(fig, use_container_width=True)
+                            if not stage_data.empty:
+                                avg_ctr = stage_data['CTR'].mean()
+                                total_conv = stage_data['Conversions'].sum()
+                                
+                                st.markdown(f"**{emoji} {stage}**")
+                                st.metric("Avg CTR", f"{avg_ctr:.2f}%" if not pd.isna(avg_ctr) else "N/A")
+                                st.metric("Total Conversions", f"{total_conv:,.0f}" if not pd.isna(total_conv) else "N/A")
+                                
+                                if 'CPA' in stage_data.columns:
+                                    avg_cpa = stage_data['CPA'].mean()
+                                    if not pd.isna(avg_cpa):
+                                        st.metric("Avg CPA", f"${avg_cpa:.2f}")
+                            else:
+                                # Show placeholder for missing stage
+                                st.markdown(f"**{emoji} {stage}**")
+                                st.caption("No data available")
+                    
+                    # Show the chart only if we have traces
+                    if len(fig.data) > 0:
+                        st.plotly_chart(fig, width="stretch")
+                    else:
+                        st.warning("⚠️ No funnel data to display after filtering.")
             else:
                 # No funnel column detected - show warning
                 st.warning("⚠️ **No Funnel Stage column detected in your data.**\n\n"
@@ -1683,7 +2417,7 @@ with tab_auto:
                     height=400,
                     hovermode='x unified'
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         
         # Move Opportunities & Risks here (after Funnel chart)
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
@@ -1765,7 +2499,7 @@ with tab_auto:
                     hover_data=['Campaign_Name'] if 'Campaign_Name' in df.columns else None
                 )
                 fig.update_layout(height=350)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             # Correlation 2: CTR vs ROAS or CTR vs Conv Rate
             with col2:
@@ -1806,7 +2540,7 @@ with tab_auto:
                 
                 if fig:
                     fig.update_layout(height=350)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
@@ -1860,7 +2594,7 @@ with tab_qa:
             ask_clicked = st.button(
                 "🚀 Ask Question",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 disabled=ask_disabled,
             )
 
@@ -1942,7 +2676,7 @@ with tab_qa:
 
             results_df = result_data.get("df")
             if results_df is not None and isinstance(results_df, pd.DataFrame) and not results_df.empty:
-                st.dataframe(result_data["df"], use_container_width=True)
+                st.dataframe(result_data["df"], width="stretch")
                 csv = result_data["df"].to_csv(index=False)
                 st.download_button(
                     "📥 Download CSV",
@@ -1993,7 +2727,7 @@ with tab_qa:
                             'Value': [results_df[col].iloc[0] for col in selected_metrics]
                         })
                         fig = px.bar(chart_data, x='Metric', y='Value', title='Key Metrics Overview')
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     
                     # Case 2: Multiple rows with 1 categorical + numeric (ALWAYS use dual-axis for 2+ metrics)
                     elif len(categorical_cols) >= 1 and len(numeric_cols) >= 1:
@@ -2063,7 +2797,7 @@ with tab_qa:
                                 )
                             )
                         
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     
                     # Case 3: Time series data (Date column + numeric) - DUAL-AXIS for trends
                     elif any('date' in col.lower() or 'month' in col.lower() or 'year' in col.lower() for col in categorical_cols) and len(numeric_cols) >= 1:
@@ -2133,14 +2867,14 @@ with tab_qa:
                                 )
                             )
                         
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     
                     # Case 4: Just numeric columns (correlation heatmap or scatter)
                     elif len(numeric_cols) >= 2 and len(results_df) > 3:
                         if len(numeric_cols) == 2:
                             fig = px.scatter(results_df, x=numeric_cols[0], y=numeric_cols[1], 
                                            title=f'{numeric_cols[0]} vs {numeric_cols[1]}', trendline='ols')
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
                         else:
                             # Show correlation heatmap
                             import plotly.figure_factory as ff
@@ -2153,13 +2887,13 @@ with tab_qa:
                                 showscale=True
                             )
                             fig.update_layout(title='Correlation Matrix')
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
                     
                     # Case 5: Pie chart for percentage/share data
                     elif len(categorical_cols) == 1 and len(numeric_cols) == 1 and len(results_df) <= 10:
                         fig = px.pie(results_df, names=categorical_cols[0], values=numeric_cols[0], 
                                     title=f'{numeric_cols[0]} Distribution')
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     
                     else:
                         st.info("💡 Data structure doesn't match common chart patterns. Showing table view above.")
@@ -2287,7 +3021,7 @@ with tab_history:
                         "user_feedback",
                     ]
                 ],
-                use_container_width=True,
+                width="stretch",
             )
 
             st.markdown("### 🔎 Query details")

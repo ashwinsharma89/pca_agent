@@ -31,6 +31,18 @@ Comprehensive guide to social media advertising channels including Meta (Faceboo
   - URL: https://leadsbridge.com/blog/what-are-meta-ads/
   - Topics: Meta advertising basics, campaign types, targeting options
 
+- **Facebook Ads 2024 Study** - Metricool (PDF)
+  - URL: https://metricool.com/wp-content/uploads/Facebook-Ads-2024-Study.pdf
+  - Topics: Benchmarks by industry, CPM/CPC trends, creative formats, audience segments
+
+- **Best Facebook Campaign Structure 2024** - Slideshare (Simplilearn)
+  - URL: https://www.slideshare.net/slideshow/best-facebook-campaign-structure-in-2024-learn-meta-and-facebook-ads-for-beginners-simplilearn/271584723
+  - Topics: Account hierarchy, campaign objectives, ad set best practices, budget allocation
+
+- **Mastering Facebook Ads** - Slideshare
+  - URL: https://www.slideshare.net/slideshow/mastering-facebook-ads-a-comprehensive-guide/266920212
+  - Topics: Creative testing frameworks, advanced targeting, measurement setup, optimization workflows
+
 ### Meta Ads Reporting
 - **Meta Ads Report Explained** - Agorapulse
   - URL: https://support.agorapulse.com/en/articles/10137532-meta-ads-report-explained
@@ -38,7 +50,24 @@ Comprehensive guide to social media advertising channels including Meta (Faceboo
 
 - **Understanding Meta Ads Reporting: A Complete Guide** - Magic Brief
   - URL: https://magicbrief.com/post/understanding-meta-ads-reporting-a-complete-guide
-  - Topics: Comprehensive reporting guide, metrics, optimization
+  - Topics: Reporting automation, custom dashboards, data hygiene
+
+### Meta Ads Research & Thought Leadership
+- **Social Media in 2025 - Turning Point** - ResearchGate
+  - URL: https://www.researchgate.net/publication/392061310_Social_Media_in_2025_-_Why_This_Year_Marks_a_Turning_Point
+  - Topics: Macro trends driving creative, privacy, AI automation in paid social
+
+- **Influencer Marketing Optimal Disclosure Strategy** - ResearchGate
+  - URL: https://www.researchgate.net/publication/386741476_Influencer_marketing_on_Instagram-The_optimal_disclosure_strategy_from_influencers'_and_marketers'_perspectives
+  - Topics: Disclosure compliance, conversion impact, influencer-marketer alignment
+
+- **Marketing Trends 2024 - Unlocking Potential** - ResearchGate
+  - URL: https://www.researchgate.net/publication/379560075_A_dive_into_the_marketing_trends_of_2024_insights_to_unlocking_potential
+  - Topics: Cross-channel social trends, AI-assisted creative, platform shift insights
+
+- **Social Media Influencer Index** - ResearchGate
+  - URL: https://www.researchgate.net/publication/334140896_Measuring_social_media_influencer_index-_insights_from_facebook_Twitter_and_Instagram
+  - Topics: Scoring models for influencer selection, multi-platform KPIs, benchmarking methodologies
 
 ### Meta Ads Video Tutorial
 - **Meta Ads Tutorial** - YouTube
