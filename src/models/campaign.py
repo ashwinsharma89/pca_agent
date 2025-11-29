@@ -8,6 +8,23 @@ from pydantic import BaseModel, Field
 from .platform import PlatformType, PlatformSnapshot, NormalizedMetric
 
 
+class BusinessModel(str, Enum):
+    """Business model types."""
+    B2B = "B2B"
+    B2C = "B2C"
+    B2B2C = "B2B2C"
+
+
+class TargetAudienceLevel(str, Enum):
+    """Target audience seniority levels (primarily for B2B)."""
+    C_SUITE = "C-suite"
+    VP_DIRECTOR = "VP/Director"
+    MANAGER = "Manager"
+    INDIVIDUAL_CONTRIBUTOR = "Individual Contributor"
+    MIXED = "Mixed"
+    CONSUMER = "Consumer"  # For B2C
+
+
 class CampaignObjective(str, Enum):
     """Campaign objectives."""
     AWARENESS = "awareness"
@@ -42,12 +59,67 @@ class DateRange(BaseModel):
         return (self.end - self.start).days + 1
 
 
+class CampaignContext(BaseModel):
+    """Business context for campaign analysis."""
+    business_model: BusinessModel = Field(..., description="Business model type (B2B, B2C, B2B2C)")
+    industry_vertical: str = Field(..., description="Industry vertical (e.g., SaaS, E-commerce, Healthcare)")
+    
+    # B2B-Specific Fields
+    sales_cycle_length: Optional[int] = Field(None, description="Average sales cycle in days")
+    average_deal_size: Optional[float] = Field(None, description="Average deal size in dollars")
+    target_audience_level: Optional[TargetAudienceLevel] = Field(None, description="Target audience seniority level")
+    
+    # B2C-Specific Fields
+    average_order_value: Optional[float] = Field(None, description="Average order value (B2C)")
+    purchase_frequency: Optional[str] = Field(None, description="Purchase frequency (e.g., 'weekly', 'monthly', 'yearly')")
+    
+    # Common Fields
+    customer_lifetime_value: Optional[float] = Field(None, description="Customer lifetime value")
+    target_cac: Optional[float] = Field(None, description="Target customer acquisition cost")
+    geographic_focus: Optional[List[str]] = Field(default_factory=list, description="Primary geographic markets")
+    
+    # Additional Context
+    competitive_intensity: Optional[str] = Field(None, description="Competitive intensity (low, medium, high)")
+    seasonality_factor: Optional[str] = Field(None, description="Seasonality impact (none, low, medium, high)")
+    brand_maturity: Optional[str] = Field(None, description="Brand maturity (startup, growth, mature, enterprise)")
+    
+    def is_b2b(self) -> bool:
+        """Check if campaign is B2B."""
+        return self.business_model in [BusinessModel.B2B, BusinessModel.B2B2C]
+    
+    def is_b2c(self) -> bool:
+        """Check if campaign is B2C."""
+        return self.business_model in [BusinessModel.B2C, BusinessModel.B2B2C]
+    
+    def get_context_summary(self) -> str:
+        """Get a human-readable summary of the campaign context."""
+        summary_parts = [
+            f"{self.business_model.value} {self.industry_vertical}"
+        ]
+        
+        if self.is_b2b() and self.sales_cycle_length:
+            summary_parts.append(f"{self.sales_cycle_length}-day sales cycle")
+        
+        if self.average_deal_size:
+            summary_parts.append(f"${self.average_deal_size:,.0f} avg deal")
+        elif self.average_order_value:
+            summary_parts.append(f"${self.average_order_value:,.0f} AOV")
+        
+        if self.target_audience_level:
+            summary_parts.append(f"targeting {self.target_audience_level.value}")
+        
+        return " | ".join(summary_parts)
+
+
 class Campaign(BaseModel):
     """Campaign analysis request."""
     campaign_id: str = Field(..., description="Unique campaign ID")
     campaign_name: str = Field(..., description="Campaign name")
     objectives: List[CampaignObjective] = Field(..., description="Campaign objectives")
     date_range: DateRange = Field(..., description="Campaign date range")
+    
+    # Business Context
+    campaign_context: Optional[CampaignContext] = Field(None, description="Business context for analysis")
     
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
