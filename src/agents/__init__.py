@@ -6,6 +6,16 @@ from .visualization_agent import VisualizationAgent
 from .report_agent import ReportAgent
 from .b2b_specialist_agent import B2BSpecialistAgent
 from .enhanced_reasoning_agent import EnhancedReasoningAgent, PatternDetector
+from .smart_visualization_engine import SmartVisualizationEngine, VisualizationType, InsightType
+from .marketing_visualization_rules import (
+    MarketingVisualizationRules,
+    MarketingInsightCategory,
+    MarketingColorSchemes
+)
+from .chart_generators import SmartChartGenerator
+from .enhanced_visualization_agent import EnhancedVisualizationAgent
+from .visualization_filters import SmartFilterEngine, FilterType, FilterCondition
+from .filter_presets import FilterPresets
 
 __all__ = [
     "VisionAgent",
@@ -15,5 +25,17 @@ __all__ = [
     "ReportAgent",
     "B2BSpecialistAgent",
     "EnhancedReasoningAgent",
-    "PatternDetector"
+    "PatternDetector",
+    "SmartVisualizationEngine",
+    "VisualizationType",
+    "InsightType",
+    "MarketingVisualizationRules",
+    "MarketingInsightCategory",
+    "MarketingColorSchemes",
+    "SmartChartGenerator",
+    "EnhancedVisualizationAgent",
+    "SmartFilterEngine",
+    "FilterType",
+    "FilterCondition",
+    "FilterPresets"
 ]
