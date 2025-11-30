@@ -46,6 +46,10 @@ from src.agents.b2b_specialist_agent import B2BSpecialistAgent
 from src.models.campaign import CampaignContext, BusinessModel, TargetAudienceLevel
 from src.knowledge.benchmark_engine import DynamicBenchmarkEngine
 from src.agents.enhanced_reasoning_agent import EnhancedReasoningAgent
+from src.agents.enhanced_visualization_agent import EnhancedVisualizationAgent
+from src.agents.visualization_filters import SmartFilterEngine
+from src.agents.filter_presets import FilterPresets
+from streamlit_components.smart_filters import InteractiveFilterPanel, QuickFilterBar, FilterPresetsUI
 #from src.query_engine.smart_interpretation import SmartQueryInterpreter
 #from src.orchestration.query_orchestrator import QueryOrchestrator
 
@@ -2243,6 +2247,157 @@ with tab_auto:
         except Exception as e:
             logger.error(f"Error in pattern analysis: {e}")
             st.warning(f"⚠️ Pattern analysis unavailable: {str(e)}")
+        
+        st.markdown("---")
+        
+        # Intelligent Visualization Section with Smart Filters
+        st.markdown("## 🎨 Intelligent Visualizations with Smart Filters")
+        
+        try:
+            # Initialize components
+            filter_engine = SmartFilterEngine()
+            viz_agent = EnhancedVisualizationAgent()
+            
+            # Prepare context for filters and visualizations
+            viz_context = {
+                'business_model': st.session_state.get('business_model', 'B2B'),
+                'target_roas': 2.5,
+                'benchmarks': {
+                    'ctr': 0.035,
+                    'roas': 2.5,
+                    'cpc': 4.5,
+                    'cpa': 75
+                }
+            }
+            
+            # ========================================
+            # SIDEBAR: Smart Filters
+            # ========================================
+            st.sidebar.markdown("---")
+            st.sidebar.header("🎛️ Smart Filters")
+            
+            # Option 1: Recommended Presets
+            st.sidebar.markdown("### ⭐ Quick Presets")
+            
+            recommended = FilterPresets.get_recommended_presets(viz_context)
+            preset_selected = None
+            
+            for preset_name in recommended[:3]:  # Show top 3
+                preset = FilterPresets.get_preset(preset_name, context=viz_context)
+                if preset:
+                    if st.sidebar.button(
+                        preset['name'],
+                        key=f"sidebar_preset_{preset_name}",
+                        use_container_width=True
+                    ):
+                        preset_selected = preset
+            
+            # Option 2: Interactive Filter Panel
+            st.sidebar.markdown("---")
+            filter_panel = InteractiveFilterPanel(filter_engine, df)
+            filtered_data = filter_panel.render(viz_context)
+            
+            # Apply preset if selected
+            if preset_selected:
+                filtered_data = filter_engine.apply_filters(df, preset_selected['filters'])
+                st.sidebar.success(f"✅ Preset applied: {preset_selected['name']}")
+            
+            # ========================================
+            # MAIN AREA: Filter Impact & Visualizations
+            # ========================================
+            
+            # Show filter impact
+            if len(filtered_data) < len(df):
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Original Rows", f"{len(df):,}")
+                col2.metric("Filtered Rows", f"{len(filtered_data):,}")
+                col3.metric("Reduction", f"{(1 - len(filtered_data)/len(df))*100:.1f}%")
+                st.info(f"📊 **Filters Active**: Analyzing {len(filtered_data):,} rows")
+            else:
+                st.info("ℹ️ No filters applied. Showing all data. Use sidebar to add filters.")
+            
+            # Add audience selector
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown("### 📊 Dashboard View")
+            with col2:
+                audience = st.selectbox(
+                    "Audience",
+                    options=["Executive", "Analyst"],
+                    help="Executive: 5-7 high-level charts | Analyst: 15-20 detailed charts",
+                    key="viz_audience"
+                )
+            
+            # Prepare insights from pattern analysis (using filtered data)
+            viz_insights = []
+            if pattern_analysis and pattern_analysis.get('insights'):
+                for idx, insight in enumerate(pattern_analysis['insights']):
+                    viz_insights.append({
+                        'id': f'pattern_{idx}',
+                        'title': insight.get('message', 'Pattern Insight'),
+                        'description': insight.get('message', ''),
+                        'priority': 10 - idx,
+                        'data': {}
+                    })
+            
+            # Create appropriate dashboard based on audience (using filtered data)
+            if audience == "Executive":
+                st.info("📊 **Executive Dashboard**: High-level overview with 5-7 key charts for quick decision-making")
+                
+                dashboard_viz = viz_agent.create_executive_dashboard(
+                    insights=viz_insights,
+                    campaign_data=filtered_data,  # Using filtered data!
+                    context=viz_context
+                )
+                
+                # Display executive charts
+                for viz in dashboard_viz:
+                    st.markdown(f"#### {viz['title']}")
+                    st.caption(viz['description'])
+                    st.plotly_chart(viz['chart'], use_container_width=True)
+                    st.markdown("---")
+                
+                st.success(f"✅ Executive dashboard complete: {len(dashboard_viz)} charts from filtered data")
+                
+            else:  # Analyst
+                st.info("🔬 **Analyst Dashboard**: Comprehensive analysis with 15-20 detailed charts for deep-dive exploration")
+                
+                dashboard_viz = viz_agent.create_analyst_dashboard(
+                    insights=viz_insights,
+                    campaign_data=filtered_data  # Using filtered data!
+                )
+                
+                # Group by section
+                sections = {}
+                for viz in dashboard_viz:
+                    section = viz.get('section', 'other')
+                    if section not in sections:
+                        sections[section] = []
+                    sections[section].append(viz)
+                
+                # Display analyst charts by section
+                for section, charts in sections.items():
+                    with st.expander(f"📊 {section.replace('_', ' ').title()} ({len(charts)} charts)", expanded=True):
+                        for viz in charts:
+                            st.markdown(f"##### {viz['title']}")
+                            st.plotly_chart(viz['chart'], use_container_width=True)
+                            st.markdown("---")
+                
+                st.success(f"✅ Analyst dashboard complete: {len(dashboard_viz)} charts across {len(sections)} sections from filtered data")
+            
+            # Add download option
+            st.markdown("### 💾 Export Dashboard")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📥 Download Charts as HTML", key="download_html"):
+                    st.info("Chart export functionality coming soon!")
+            with col2:
+                if st.button("📊 Generate PDF Report", key="download_pdf"):
+                    st.info("PDF report generation coming soon!")
+        
+        except Exception as e:
+            logger.error(f"Error in intelligent visualization: {e}")
+            st.warning(f"⚠️ Intelligent visualization unavailable: {str(e)}")
         
         st.markdown("---")
 
