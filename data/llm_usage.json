@@ -286,5 +286,17 @@
     "operation": "llm_call",
     "success": true,
     "latency_ms": 35907.45306015015
+  },
+  {
+    "request_id": "9a219ee3",
+    "model": "claude-sonnet-4-5-20250929",
+    "provider": "anthropic",
+    "input_tokens": 1348,
+    "output_tokens": 1221,
+    "cost_usd": 0.022359,
+    "timestamp": "2025-12-01T12:02:03.930785",
+    "operation": "llm_call",
+    "success": true,
+    "latency_ms": 34704.01883125305
   }
 ]

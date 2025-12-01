@@ -5,6 +5,11 @@ uvicorn>=0.38.0
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 
+# FastAPI Security
+python-jose[cryptography]>=3.5.0  # JWT authentication
+slowapi>=0.1.9                     # Rate limiting
+passlib[bcrypt]>=1.7.4             # Password hashing
+
 # MCP (Model Context Protocol)
 mcp>=1.22.0
 asyncio>=4.0.0
@@ -19,6 +24,14 @@ langchain-anthropic==0.1.4
 langgraph==0.0.32
 langsmith==0.1.17
 google-generativeai
+
+# Vector Database
+chromadb>=0.4.0  # Persistent vector store
+faiss-cpu  # Legacy support
+
+# Redis (for distributed rate limiting)
+redis>=5.0.0
+hiredis>=2.2.0  # C parser for better performance
 
 
 # Computer Vision
@@ -52,8 +65,10 @@ Jinja2
 
 # Database/Cache
 redis
-sqlalchemy
+sqlalchemy>=2.0.0
 alembic
+psycopg2-binary  # PostgreSQL adapter
+dependency-injector>=4.41.0  # Dependency injection framework
 
 # Task Queue
 celery
@@ -87,11 +102,19 @@ pytest==7.4.0
 pytest-asyncio==0.23.4
 pytest-cov
 
-# Code Quality
+# Code Quality & Testing
 black
 flake8
 mypy
 ipython
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+bandit>=1.7.5
+safety>=2.3.0
 
 # Streamlit Extensions
 streamlit-aggrid

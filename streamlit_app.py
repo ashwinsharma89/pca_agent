@@ -48,6 +48,7 @@ from src.knowledge.benchmark_engine import DynamicBenchmarkEngine
 from src.agents.enhanced_reasoning_agent import EnhancedReasoningAgent
 from src.agents.enhanced_visualization_agent import EnhancedVisualizationAgent
 from src.agents.visualization_filters import SmartFilterEngine
+from src.streamlit_integration import get_streamlit_db_manager
 from src.agents.filter_presets import FilterPresets
 from streamlit_components.smart_filters import InteractiveFilterPanel, QuickFilterBar, FilterPresetsUI
 #from src.query_engine.smart_interpretation import SmartQueryInterpreter
@@ -541,6 +542,40 @@ def load_cached_df_if_available():
 
 
 load_cached_df_if_available()
+
+
+# ---------------------------------------------------------------------------
+# Database Integration Helper
+# ---------------------------------------------------------------------------
+@st.cache_resource
+def get_db_manager():
+    """Get cached database manager instance."""
+    return get_streamlit_db_manager()
+
+
+def save_to_database(df: pd.DataFrame) -> bool:
+    """
+    Save DataFrame to database.
+    
+    Args:
+        df: DataFrame to save
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        db_manager = get_db_manager()
+        result = db_manager.import_dataframe(df)
+        
+        if result['success']:
+            logger.info(f"✅ Saved {result['imported_count']} campaigns to database")
+            return True
+        else:
+            logger.error(f"❌ Database save failed: {result['message']}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Database save error: {e}")
+        return False
 
 
 def _get_column(df: pd.DataFrame, metric: str) -> Optional[str]:
@@ -1043,9 +1078,16 @@ with tab_auto:
                     except Exception:
                         pass
                     
+                    # Save to database
+                    with st.spinner("💾 Saving to database..."):
+                        if save_to_database(df):
+                            st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns • Saved to database")
+                        else:
+                            st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
+                            st.warning("⚠️ Database save failed (data still available in session)")
+                    
                     # Show what was mapped
                     normalized_cols = df.columns.tolist()
-                    st.success(f"✅ Loaded {len(df)} rows • {len(df.columns)} columns")
                     
                     # Show column mapping info
                     if original_cols != normalized_cols:
