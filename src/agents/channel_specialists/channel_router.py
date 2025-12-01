@@ -221,18 +221,67 @@ class ChannelRouter:
         # Perform analysis
         logger.info(f"Routing to {channel_type} specialist for analysis")
         try:
+            # Validate data before analysis
+            if campaign_data.empty:
+                logger.warning("Empty campaign data provided")
+                return {
+                    'channel_type': channel_type,
+                    'status': 'error',
+                    'error': 'Empty dataset',
+                    'message': 'No data available for analysis'
+                }
+            
+            # Make a copy to avoid modifying original
+            campaign_data = campaign_data.copy()
+            
+            # Clean data: Check for extremely long string values that shouldn't be there
+            for col in campaign_data.columns:
+                if campaign_data[col].dtype == 'object':  # String column
+                    # Check if any value is suspiciously long (>500 chars)
+                    max_length = campaign_data[col].astype(str).str.len().max()
+                    if max_length > 500:
+                        logger.warning(f"Column '{col}' has extremely long values (max: {max_length} chars). Replacing with 'Mixed'.")
+                        # Replace long strings with a placeholder
+                        campaign_data[col] = campaign_data[col].apply(
+                            lambda x: 'Mixed' if isinstance(x, str) and len(x) > 500 else x
+                        )
+            
+            # Force numeric conversion for common metric columns
+            numeric_cols = ['Spend', 'Cost', 'Revenue', 'Conversions', 'Clicks', 'Impressions', 
+                          'CTR', 'CPC', 'CPA', 'ROAS', 'ROI', 'Quality_Score', 'Avg_CPC',
+                          'Impression_Share', 'Conversion_Rate', 'Bounce_Rate']
+            
+            for col in numeric_cols:
+                if col in campaign_data.columns:
+                    # Try to convert to numeric, coercing errors to NaN
+                    campaign_data[col] = pd.to_numeric(campaign_data[col], errors='coerce')
+                    logger.debug(f"Converted {col} to numeric")
+            
+            # Log data info for debugging
+            logger.debug(f"Campaign data shape: {campaign_data.shape}")
+            logger.debug(f"Campaign data columns: {campaign_data.columns.tolist()}")
+            logger.debug(f"Campaign data dtypes: {campaign_data.dtypes.to_dict()}")
+            
             analysis = specialist.analyze(campaign_data)
             analysis['channel_type'] = channel_type
             analysis['specialist_used'] = specialist.__class__.__name__
             return analysis
+        except (ValueError, TypeError) as e:
+            error_msg = str(e)
+            logger.error(f"Data error in {channel_type} specialist analysis: {error_msg[:200]}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            
+            # Return a basic analysis instead of error
+            return self._generate_fallback_analysis(campaign_data, channel_type, error_msg)
         except Exception as e:
-            logger.error(f"Error in {channel_type} specialist analysis: {e}")
-            return {
-                'channel_type': channel_type,
-                'status': 'error',
-                'error': str(e),
-                'message': f'Analysis failed for {channel_type} channel'
-            }
+            error_msg = str(e)
+            logger.error(f"Error in {channel_type} specialist analysis: {error_msg[:200]}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            
+            # Return a basic analysis instead of error
+            return self._generate_fallback_analysis(campaign_data, channel_type, error_msg)
     
     def get_specialist(self, channel_type: str) -> Optional[BaseChannelSpecialist]:
         """
@@ -332,6 +381,94 @@ class ChannelRouter:
             })
         
         return insights
+    
+    def _generate_fallback_analysis(self, campaign_data: pd.DataFrame, channel_type: str, error_msg: str) -> Dict[str, Any]:
+        """
+        Generate a basic fallback analysis when specialist fails.
+        
+        Args:
+            campaign_data: Campaign data
+            channel_type: Type of channel
+            error_msg: Error message from failed analysis
+            
+        Returns:
+            Basic analysis dictionary
+        """
+        logger.info(f"Generating fallback analysis for {channel_type} channel")
+        
+        # Try to extract basic metrics safely
+        metrics = {}
+        
+        # Safe metric extraction
+        def safe_sum(col):
+            if col in campaign_data.columns:
+                try:
+                    return pd.to_numeric(campaign_data[col], errors='coerce').sum()
+                except:
+                    return 0
+            return 0
+        
+        def safe_mean(col):
+            if col in campaign_data.columns:
+                try:
+                    return pd.to_numeric(campaign_data[col], errors='coerce').mean()
+                except:
+                    return 0
+            return 0
+        
+        metrics['total_spend'] = safe_sum('Spend') or safe_sum('Cost')
+        metrics['total_clicks'] = safe_sum('Clicks')
+        metrics['total_impressions'] = safe_sum('Impressions')
+        metrics['total_conversions'] = safe_sum('Conversions')
+        metrics['avg_ctr'] = safe_mean('CTR')
+        metrics['avg_cpc'] = safe_mean('CPC') or safe_mean('Avg_CPC')
+        metrics['avg_roas'] = safe_mean('ROAS')
+        
+        # Determine platform
+        platform = 'Unknown'
+        if 'Platform' in campaign_data.columns:
+            try:
+                platform = campaign_data['Platform'].mode().iloc[0] if len(campaign_data['Platform'].mode()) > 0 else 'Unknown'
+            except:
+                platform = 'Unknown'
+        
+        # Determine health based on available metrics
+        health = 'average'
+        if metrics['avg_roas'] > 3:
+            health = 'good'
+        elif metrics['avg_roas'] > 4:
+            health = 'excellent'
+        elif metrics['avg_roas'] < 2 and metrics['avg_roas'] > 0:
+            health = 'needs_improvement'
+        
+        return {
+            'channel_type': channel_type,
+            'platform': platform,
+            'overall_health': health,
+            'status': 'fallback',
+            'message': 'Basic analysis generated due to data format issues',
+            'metrics': metrics,
+            'basic_metrics': {
+                'metric': 'Overview',
+                'status': health,
+                'findings': [
+                    f"Total spend: ${metrics['total_spend']:,.2f}" if metrics['total_spend'] > 0 else "Spend data unavailable",
+                    f"Total conversions: {metrics['total_conversions']:,.0f}" if metrics['total_conversions'] > 0 else "Conversion data unavailable",
+                    f"Average ROAS: {metrics['avg_roas']:.2f}x" if metrics['avg_roas'] > 0 else "ROAS data unavailable"
+                ],
+                'recommendation': 'Review data format for more detailed analysis'
+            },
+            'recommendations': [
+                {
+                    'area': 'data_quality',
+                    'priority': 'medium',
+                    'recommendation': 'Ensure numeric columns contain only numbers for detailed analysis',
+                    'expected_impact': 'Better insights'
+                }
+            ],
+            'specialist_used': 'FallbackAnalyzer',
+            'data_issue': error_msg[:200] if len(error_msg) > 200 else error_msg
+        }
     
     def get_available_specialists(self) -> Dict[str, str]:
         """

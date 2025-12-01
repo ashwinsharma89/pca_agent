@@ -4,8 +4,9 @@ FastAPI main application for PCA Agent.
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Dict, Any
 import uuid
+import os
 from pathlib import Path
 from datetime import date
 
@@ -23,6 +24,18 @@ from ..models import (
 from ..orchestration import PCAWorkflow
 from ..config import settings
 from ..utils import setup_logger
+from ..utils.resilience import (
+    get_resilience_status, health_checker, HealthStatus,
+    CircuitBreaker, DeadLetterQueue
+)
+from ..utils.observability import (
+    get_observability_status, metrics, tracer, cost_tracker, alerts,
+    structured_logger
+)
+from ..utils.performance import (
+    get_optimizer, get_performance_metrics, estimate_optimization_impact,
+    SemanticCache
+)
 
 # Initialize logger
 setup_logger()
@@ -62,8 +75,251 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Basic health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/health/detailed")
+async def detailed_health_check() -> Dict[str, Any]:
+    """
+    Detailed health check with resilience status.
+    
+    Returns:
+        Comprehensive health status including:
+        - Overall system health
+        - Circuit breaker states
+        - Dead letter queue stats
+        - Individual service health checks
+    """
+    try:
+        resilience_status = get_resilience_status()
+        
+        # Check if any circuit breakers are open
+        circuit_breakers = resilience_status.get("circuit_breakers", {})
+        any_circuit_open = any(
+            cb.get("state") == "open" 
+            for cb in circuit_breakers.values()
+        )
+        
+        # Check dead letter queue
+        dlq_stats = resilience_status.get("dead_letter_queue", {})
+        dlq_count = dlq_stats.get("total_jobs", 0)
+        
+        # Determine overall health
+        is_healthy = not any_circuit_open and dlq_count < 100
+        
+        return {
+            "status": "healthy" if is_healthy else "degraded",
+            "timestamp": date.today().isoformat(),
+            "components": {
+                "api": {"status": "healthy"},
+                "circuit_breakers": {
+                    "status": "degraded" if any_circuit_open else "healthy",
+                    "details": circuit_breakers
+                },
+                "dead_letter_queue": {
+                    "status": "warning" if dlq_count > 50 else "healthy",
+                    "pending_jobs": dlq_count,
+                    "details": dlq_stats
+                }
+            },
+            "health_checks": resilience_status.get("health_checks", {})
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+
+
+@app.get("/resilience/status")
+async def resilience_status() -> Dict[str, Any]:
+    """
+    Get full resilience system status.
+    
+    Returns:
+        Complete status of all resilience components.
+    """
+    return get_resilience_status()
+
+
+@app.get("/resilience/circuit-breakers")
+async def circuit_breaker_status() -> Dict[str, Any]:
+    """Get status of all circuit breakers."""
+    return CircuitBreaker.get_all_states()
+
+
+@app.post("/resilience/circuit-breakers/{name}/reset")
+async def reset_circuit_breaker(name: str):
+    """Manually reset a circuit breaker."""
+    try:
+        cb = CircuitBreaker.get_instance(name)
+        cb.reset()
+        return {"status": "success", "message": f"Circuit breaker '{name}' reset"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/resilience/dead-letter-queue")
+async def dead_letter_queue_status() -> Dict[str, Any]:
+    """Get dead letter queue status and jobs."""
+    dlq = DeadLetterQueue.get_instance()
+    return {
+        "stats": dlq.stats(),
+        "jobs": [job.to_dict() for job in dlq.get_all()[:50]]  # Limit to 50
+    }
+
+
+@app.delete("/resilience/dead-letter-queue/{job_id}")
+async def remove_dlq_job(job_id: str):
+    """Remove a job from the dead letter queue."""
+    dlq = DeadLetterQueue.get_instance()
+    if dlq.remove(job_id):
+        return {"status": "success", "message": f"Job '{job_id}' removed"}
+    raise HTTPException(status_code=404, detail="Job not found")
+
+
+# =============================================================================
+# OBSERVABILITY ENDPOINTS
+# =============================================================================
+
+@app.get("/observability/status")
+async def observability_status() -> Dict[str, Any]:
+    """
+    Get complete observability status.
+    
+    Returns:
+        Full observability data including metrics, traces, alerts, and costs.
+    """
+    return get_observability_status()
+
+
+@app.get("/observability/metrics")
+async def get_metrics() -> Dict[str, Any]:
+    """Get all collected metrics."""
+    return metrics.get_all_metrics()
+
+
+@app.get("/observability/metrics/prometheus")
+async def get_metrics_prometheus():
+    """Get metrics in Prometheus text format."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(
+        content=metrics.to_prometheus_format(),
+        media_type="text/plain"
+    )
+
+
+@app.get("/observability/traces")
+async def get_traces(limit: int = 50) -> Dict[str, Any]:
+    """Get recent traces."""
+    return {
+        "traces": tracer.get_recent_traces(limit=limit)
+    }
+
+
+@app.get("/observability/traces/{trace_id}")
+async def get_trace(trace_id: str) -> Dict[str, Any]:
+    """Get a specific trace by ID."""
+    spans = tracer.get_trace(trace_id)
+    if not spans:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return {
+        "trace_id": trace_id,
+        "spans": spans
+    }
+
+
+@app.get("/observability/alerts")
+async def get_alerts() -> Dict[str, Any]:
+    """Get active alerts and alert history."""
+    return {
+        "active": alerts.get_active_alerts(),
+        "history": alerts.get_alert_history(limit=100)
+    }
+
+
+@app.post("/observability/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str):
+    """Acknowledge an alert."""
+    alerts.acknowledge_alert(alert_id)
+    return {"status": "success", "message": f"Alert '{alert_id}' acknowledged"}
+
+
+@app.post("/observability/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str):
+    """Resolve an alert."""
+    alerts.resolve_alert(alert_id)
+    return {"status": "success", "message": f"Alert '{alert_id}' resolved"}
+
+
+@app.get("/observability/costs")
+async def get_costs() -> Dict[str, Any]:
+    """Get LLM cost tracking data."""
+    return cost_tracker.get_usage_stats()
+
+
+@app.post("/observability/costs/budget")
+async def set_budget(daily: float = None, monthly: float = None):
+    """Set cost budget limits."""
+    cost_tracker.set_budget(daily=daily, monthly=monthly)
+    return {
+        "status": "success",
+        "budgets": {
+            "daily": cost_tracker._daily_budget,
+            "monthly": cost_tracker._monthly_budget
+        }
+    }
+
+
+# =============================================================================
+# PERFORMANCE OPTIMIZATION ENDPOINTS
+# =============================================================================
+
+@app.get("/performance/status")
+async def performance_status() -> Dict[str, Any]:
+    """
+    Get performance optimization status and metrics.
+    
+    Returns:
+        Performance metrics from all optimization components.
+    """
+    return get_performance_metrics()
+
+
+@app.get("/performance/impact")
+async def performance_impact() -> Dict[str, Any]:
+    """
+    Get estimated impact of performance optimizations.
+    
+    Returns:
+        Estimated time and cost savings from optimizations.
+    """
+    return estimate_optimization_impact()
+
+
+@app.get("/performance/cache/stats")
+async def cache_stats() -> Dict[str, Any]:
+    """Get semantic cache statistics."""
+    cache = SemanticCache.get_instance()
+    return cache.get_metrics()
+
+
+@app.post("/performance/cache/clear")
+async def clear_cache():
+    """Clear the semantic cache."""
+    cache = SemanticCache.get_instance()
+    cache.clear()
+    return {"status": "success", "message": "Cache cleared"}
+
+
+@app.post("/performance/cache/save")
+async def save_cache():
+    """Save cache to disk for persistence."""
+    cache = SemanticCache.get_instance()
+    cache.save_cache()
+    return {"status": "success", "message": "Cache saved to disk"}
 
 
 @app.post("/api/campaigns")

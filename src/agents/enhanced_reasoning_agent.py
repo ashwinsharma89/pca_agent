@@ -336,7 +336,10 @@ class PatternDetector:
             'seasonality': self._detect_seasonality(campaign_data),
             'creative_fatigue': self._detect_creative_fatigue(campaign_data),
             'audience_saturation': self._detect_audience_saturation(campaign_data),
-            'day_parting_opportunities': self._find_day_parting(campaign_data)
+            'day_parting_opportunities': self._find_day_parting(campaign_data),
+            'budget_pacing': self._analyze_budget_pacing(campaign_data),
+            'performance_clusters': self._identify_performance_clusters(campaign_data),
+            'conversion_patterns': self._analyze_conversion_patterns(campaign_data)
         }
     
     def _detect_trends(self, data: pd.DataFrame) -> Dict[str, Any]:
@@ -632,5 +635,228 @@ class PatternDetector:
         
         except Exception as e:
             logger.warning(f"Error finding day parting opportunities: {e}")
+        
+        return {'detected': False}
+    
+    def _analyze_budget_pacing(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Analyze budget pacing and spending patterns
+        
+        Detects if budget is being spent too quickly or too slowly
+        """
+        try:
+            if 'Date' not in data.columns or 'Spend' not in data.columns:
+                return {'detected': False, 'reason': 'Missing required columns'}
+            
+            if len(data) < 7:
+                return {'detected': False, 'reason': 'Insufficient data'}
+            
+            data_sorted = data.sort_values('Date')
+            
+            # Calculate daily spend
+            daily_spend = data_sorted.groupby('Date')['Spend'].sum()
+            
+            # Calculate expected vs actual pacing
+            total_days = len(daily_spend)
+            days_elapsed = total_days  # Assuming we're analyzing complete period
+            
+            total_spend = daily_spend.sum()
+            avg_daily_spend = total_spend / total_days
+            
+            # Calculate spend velocity (trend)
+            spend_values = daily_spend.values
+            if len(spend_values) > 2:
+                slope, _, r_value, _, _ = stats.linregress(range(len(spend_values)), spend_values)
+                
+                # Determine pacing status
+                if slope > avg_daily_spend * 0.1:  # Accelerating spend
+                    severity = 'high' if slope > avg_daily_spend * 0.2 else 'medium'
+                    return {
+                        'detected': True,
+                        'status': 'accelerating',
+                        'severity': severity,
+                        'evidence': {
+                            'daily_increase': float(slope),
+                            'avg_daily_spend': float(avg_daily_spend),
+                            'acceleration_rate': float(slope / avg_daily_spend)
+                        },
+                        'recommendation': 'Budget pacing ahead of schedule - review daily caps',
+                        'expected_impact': 'Budget may exhaust early, missing end-of-period opportunities'
+                    }
+                elif slope < -avg_daily_spend * 0.1:  # Decelerating spend
+                    severity = 'high' if slope < -avg_daily_spend * 0.2 else 'medium'
+                    return {
+                        'detected': True,
+                        'status': 'decelerating',
+                        'severity': severity,
+                        'evidence': {
+                            'daily_decrease': float(slope),
+                            'avg_daily_spend': float(avg_daily_spend),
+                            'deceleration_rate': float(slope / avg_daily_spend)
+                        },
+                        'recommendation': 'Budget pacing behind schedule - increase bids or expand targeting',
+                        'expected_impact': 'Underutilized budget, missing potential conversions'
+                    }
+                else:
+                    return {
+                        'detected': True,
+                        'status': 'optimal',
+                        'severity': 'low',
+                        'evidence': {
+                            'avg_daily_spend': float(avg_daily_spend),
+                            'consistency': 'high'
+                        },
+                        'recommendation': 'Budget pacing is optimal',
+                        'expected_impact': 'Maintaining current trajectory'
+                    }
+        
+        except Exception as e:
+            logger.warning(f"Error analyzing budget pacing: {e}")
+        
+        return {'detected': False}
+    
+    def _identify_performance_clusters(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Identify clusters of high/low performing campaigns or segments
+        
+        Groups campaigns by performance characteristics
+        """
+        try:
+            if 'Campaign' not in data.columns or len(data) < 5:
+                return {'detected': False, 'reason': 'Insufficient campaign data'}
+            
+            # Calculate performance metrics by campaign
+            campaign_metrics = data.groupby('Campaign').agg({
+                'Spend': 'sum',
+                'Conversions': 'sum',
+                'CTR': 'mean' if 'CTR' in data.columns else lambda x: 0,
+                'ROAS': 'mean' if 'ROAS' in data.columns else lambda x: 0
+            })
+            
+            if len(campaign_metrics) < 3:
+                return {'detected': False, 'reason': 'Too few campaigns'}
+            
+            # Calculate CPA
+            campaign_metrics['CPA'] = campaign_metrics['Spend'] / campaign_metrics['Conversions']
+            campaign_metrics['CPA'] = campaign_metrics['CPA'].replace([np.inf, -np.inf], np.nan)
+            
+            # Identify top and bottom performers
+            if 'ROAS' in campaign_metrics.columns:
+                top_performers = campaign_metrics.nlargest(3, 'ROAS').index.tolist()
+                bottom_performers = campaign_metrics.nsmallest(3, 'ROAS').index.tolist()
+                
+                top_avg_roas = campaign_metrics.loc[top_performers, 'ROAS'].mean()
+                bottom_avg_roas = campaign_metrics.loc[bottom_performers, 'ROAS'].mean()
+                
+                performance_gap = top_avg_roas - bottom_avg_roas
+                
+                if performance_gap > 1.0:  # Significant gap
+                    return {
+                        'detected': True,
+                        'clusters': {
+                            'high_performers': {
+                                'campaigns': top_performers,
+                                'avg_roas': float(top_avg_roas),
+                                'count': len(top_performers)
+                            },
+                            'low_performers': {
+                                'campaigns': bottom_performers,
+                                'avg_roas': float(bottom_avg_roas),
+                                'count': len(bottom_performers)
+                            }
+                        },
+                        'performance_gap': float(performance_gap),
+                        'recommendation': f'Shift budget from low performers ({bottom_performers}) to high performers ({top_performers})',
+                        'expected_impact': f'Potential ROAS improvement: +{performance_gap:.1f}x'
+                    }
+        
+        except Exception as e:
+            logger.warning(f"Error identifying performance clusters: {e}")
+        
+        return {'detected': False}
+    
+    def _analyze_conversion_patterns(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Analyze conversion patterns and identify optimization opportunities
+        
+        Looks for patterns in conversion rates, timing, and segments
+        """
+        try:
+            if 'Conversions' not in data.columns or len(data) < 10:
+                return {'detected': False, 'reason': 'Insufficient conversion data'}
+            
+            patterns = {}
+            
+            # 1. Device conversion patterns
+            if 'Device' in data.columns:
+                device_conv = data.groupby('Device').agg({
+                    'Conversions': 'sum',
+                    'Spend': 'sum',
+                    'Clicks': 'sum' if 'Clicks' in data.columns else lambda x: 0
+                })
+                
+                if len(device_conv) > 1:
+                    device_conv['CPA'] = device_conv['Spend'] / device_conv['Conversions']
+                    device_conv['Conv_Rate'] = device_conv['Conversions'] / device_conv['Clicks']
+                    
+                    best_device = device_conv['CPA'].idxmin()
+                    worst_device = device_conv['CPA'].idxmax()
+                    
+                    patterns['device'] = {
+                        'best_device': best_device,
+                        'worst_device': worst_device,
+                        'best_cpa': float(device_conv.loc[best_device, 'CPA']),
+                        'worst_cpa': float(device_conv.loc[worst_device, 'CPA']),
+                        'recommendation': f'Prioritize {best_device} - {(device_conv.loc[worst_device, "CPA"] / device_conv.loc[best_device, "CPA"] - 1) * 100:.0f}% lower CPA'
+                    }
+            
+            # 2. Time-based conversion patterns
+            if 'Date' in data.columns:
+                data_sorted = data.sort_values('Date')
+                data_sorted['DayOfWeek'] = pd.to_datetime(data_sorted['Date']).dt.dayofweek
+                
+                dow_conv = data_sorted.groupby('DayOfWeek')['Conversions'].sum()
+                
+                if len(dow_conv) >= 5:
+                    best_day = dow_conv.idxmax()
+                    worst_day = dow_conv.idxmin()
+                    
+                    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    
+                    patterns['timing'] = {
+                        'best_day': day_names[best_day],
+                        'worst_day': day_names[worst_day],
+                        'best_day_conversions': int(dow_conv[best_day]),
+                        'worst_day_conversions': int(dow_conv[worst_day]),
+                        'recommendation': f'Increase budget on {day_names[best_day]}'
+                    }
+            
+            # 3. Funnel stage patterns
+            if 'Funnel_Stage' in data.columns:
+                funnel_conv = data.groupby('Funnel_Stage').agg({
+                    'Conversions': 'sum',
+                    'Spend': 'sum'
+                })
+                
+                if len(funnel_conv) > 1:
+                    funnel_conv['CPA'] = funnel_conv['Spend'] / funnel_conv['Conversions']
+                    
+                    best_stage = funnel_conv['CPA'].idxmin()
+                    
+                    patterns['funnel'] = {
+                        'best_stage': best_stage,
+                        'best_cpa': float(funnel_conv.loc[best_stage, 'CPA']),
+                        'recommendation': f'Focus on {best_stage} stage campaigns'
+                    }
+            
+            if patterns:
+                return {
+                    'detected': True,
+                    'patterns': patterns,
+                    'summary': f'Found {len(patterns)} conversion pattern opportunities'
+                }
+        
+        except Exception as e:
+            logger.warning(f"Error analyzing conversion patterns: {e}")
         
         return {'detected': False}

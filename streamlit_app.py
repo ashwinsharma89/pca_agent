@@ -555,25 +555,44 @@ def _get_column(df: pd.DataFrame, metric: str) -> Optional[str]:
 
 
 def _strip_light_markup(text: str) -> str:
-    """Remove italics/underline markers from LLM output while preserving bold."""
+    """Remove italics/underline markers and fix ALL number-letter spacing issues."""
     if not isinstance(text, str):
         return text
+    
+    # PASS 1: Basic HTML cleanup
     text = text.replace('&nbsp;', ' ').replace('\xa0', ' ')
     text = text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
     text = re.sub(r'<(i|em)>(.*?)</\1>', lambda m: f"**{m.group(2).strip()}**", text, flags=re.DOTALL)
     text = re.sub(r'</?(i|em)>', '', text)
     text = re.sub(r'<[^>]+>', '', text)
-    def _bold_repl(match: re.Match) -> str:
-        inner = match.group(1).strip()
-        return f"**{inner}**" if inner else ""
-
-    text = re.sub(r'\*\*(.+?)\*\*', _bold_repl, text, flags=re.DOTALL)
-    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', _bold_repl, text, flags=re.DOTALL)
-    text = re.sub(r'__(.+?)__', _bold_repl, text, flags=re.DOTALL)
-    text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', _bold_repl, text, flags=re.DOTALL)
     
-    # Fix common concatenated word patterns (dictionary-based)
+    # PASS 2: Remove asterisks and underscores
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'_+', '', text)
+    
+    # PASS 3: Fix em-dash and en-dash spacing
+    text = text.replace('—', ' - ')
+    text = text.replace('–', ' - ')
+    
+    # PASS 4: SIMPLE RULE - Always space after any number or decimal
+    # This catches ALL cases: 39.05CPA, 992campaigns, 4.45Macross, etc.
+    for _ in range(5):
+        # Space after decimal number followed by any letter
+        text = re.sub(r'(\d+\.\d+)([A-Za-z])', r'\1 \2', text)
+        # Space after integer followed by any letter
+        text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+        # Space before number when preceded by letter
+        text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+    
+    # PASS 5: Fix common concatenated patterns
     common_fixes = {
+        'versusDIS': 'versus DIS',
+        'versusSOC': 'versus SOC',
+        'comparedto': 'compared to',
+        'fromDIS': 'from DIS',
+        'fromSOC': 'from SOC',
+        'toSOC': 'to SOC',
+        'toDIS': 'to DIS',
         'isconcerning': 'is concerning',
         'isnotably': 'is notably',
         'asit': 'as it',
@@ -589,25 +608,104 @@ def _strip_light_markup(text: str) -> str:
         'especiallyfor': 'especially for',
         'GoogleAds': 'Google Ads',
         'MetaAds': 'Meta Ads',
+        'Thisreallocation': 'This reallocation',
+        'wouldreduce': 'would reduce',
+        'spendto': 'spend to',
+        'potentiallygenerating': 'potentially generating',
+        'additionalconversions': 'additional conversions',
+        'basedoncurrent': 'based on current',
+        'performanceratios': 'performance ratios',
+        'costefficiency': 'cost efficiency',
+        'percentCTR': 'percent CTR',
+        'higherthan': 'higher than',
+        'establishesitas': 'establishes it as',
+        'yourprimary': 'your primary',
+        'growthengine': 'growth engine',
+        'withproven': 'with proven',
+        'scalabilitypotential': 'scalability potential',
+        'Youroverall': 'Your overall',
+        'trafficacquisit': 'traffic acquisit',
+        'spendwhileachieving': 'spend while achieving',
+        'xbetter': 'x better',
+
+        # Targeted fixes for remaining artifacts seen in SECTION 1
+        'spendacross': 'spend across',
+        'campaignsand': 'campaigns and',
+        'Plat form': 'Platform',
+        'plat forms': 'platforms',
+        'Overallper formance': 'Overall performance',
+        'per formance': 'performance',
+        'per formanceshows': 'performance shows',
+        
+        # Fixes for concatenated words after numbers
+        'CPAcombined': 'CPA combined',
+        'CPCThe': 'CPC. The',
+        'percentconversion': 'percent conversion',
+        'ratereveals': 'rate reveals',
+        'revealsahigh': 'reveals a high',
+        'ahigh-intent': 'a high-intent',
+        'audiencebut': 'audience but',
+        'butinefficient': 'but inefficient',
+        'inefficienttraffic': 'inefficient traffic',
+        'trafficacquisition': 'traffic acquisition',
+        'acquisitionat': 'acquisition at',
+        'withexceptional': 'with exceptional',
+        
+        # New fixes based on latest screenshots
+        'campaignson': 'campaigns on',
+        'platformsgenerating': 'platforms generating',
+        'conversionsat': 'conversions at',
+        'CPAfrom': 'CPA from',
+        'CPAwith': 'CPA with',
+        'Mat': 'M at',
+        'Kconversions': 'K conversions',
+        'Mspend': 'M spend',
+        'Mimpressions': 'M impressions',
+        'Mclicks': 'M clicks',
+        'conversionswhile': 'conversions while',
+        'whileDIS': 'while DIS',
+        'DISseverely': 'DIS severely',
+        'severelyunderperforms': 'severely underperforms',
+        'underperformsat': 'underperforms at',
+        'performsat': 'performs at',
     }
     for wrong, correct in common_fixes.items():
         text = text.replace(wrong, correct)
     
-    # Fix missing spaces between words using regex
-    # Add space after punctuation if followed by letter
-    text = re.sub(r'([.,;:!?])([a-zA-Z])', r'\1 \2', text)
-    # Add space between digit and letter
-    text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
-    # Add space between lowercase and uppercase (camelCase) - critical for "withMeta" -> "with Meta"
+    # PASS 6: Fix punctuation spacing
+    text = re.sub(r'([.,;:!?])([A-Za-z0-9])', r'\1 \2', text)
+    text = re.sub(r'(\))([A-Za-z])', r'\1 \2', text)
+    
+    # PASS 7: Fix camelCase (lowercase followed by uppercase)
     text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-    # Add space between letter and digit
-    text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
-    # Add space between uppercase and lowercase when followed by uppercase (e.g., "CPAat" -> "CPA at")
+    
+    # PASS 8: Fix uppercase abbreviations followed by lowercase (CPAat -> CPA at)
     text = re.sub(r'([A-Z]{2,})([a-z])', r'\1 \2', text)
     
-    # Fix formatting issues with lines starting with numbers (e.g., "1.Platform" -> "1. Platform")
+    # PASS 9: Fix formatting issues with lines starting with numbers
     text = re.sub(r'^(\d+)\.([A-Z])', r'\1. \2', text, flags=re.MULTILINE)
     text = re.sub(r'\n(\d+)\.([A-Z])', r'\n\1. \2', text)
+    
+    # PASS 10: Final aggressive number-letter fix (run again to catch any remaining)
+    for _ in range(3):
+        text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+        text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+    
+    # PASS 11: Remove brackets from headers - [OVERALL SUMMARY] -> OVERALL SUMMARY:
+    text = re.sub(r'\[OVERALL SUMMARY\]', 'OVERALL SUMMARY:', text)
+    text = re.sub(r'\[CHANNEL SUMMARY\]', 'CHANNEL SUMMARY:', text)
+    text = re.sub(r'\[KEY STRENGTH\]', 'KEY STRENGTH:', text)
+    text = re.sub(r'\[PRIORITY ACTION\]', 'PRIORITY ACTION:', text)
+    text = re.sub(r'\[BENCHMARK PERFORMANCE\]', 'BENCHMARK PERFORMANCE:', text)
+    text = re.sub(r'\[CRITICAL GAP\]', 'CRITICAL GAP:', text)
+    
+    # PASS 11b: Remove "SECTION N:" from headers
+    # "SECTION 1: Performance Overview" -> "Performance Overview"
+    text = re.sub(r'###?\s*SECTION\s*\d+:\s*', '', text)
+    text = re.sub(r'SECTION\s*\d+:\s*', '', text)
+    
+    # PASS 12: Clean up multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
     
     return text
 
@@ -856,9 +954,10 @@ st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_auto, tab_qa, tab_history, tab_metrics = st.tabs(
+tab_auto, tab_deepdive, tab_qa, tab_history, tab_metrics = st.tabs(
     [
         "📊 Auto Analysis",
+        "🔬 Deep Dive",
         "💬 Q&A",
         "📜 Query History",
         "📈 System Analytics",
@@ -922,6 +1021,22 @@ with tab_auto:
                     
                     # Normalize column names
                     df = normalize_campaign_dataframe(df)
+                    
+                    # Clean data: Remove extremely long concatenated strings
+                    cleaned_columns = []
+                    for col in df.columns:
+                        if df[col].dtype == 'object':  # String column
+                            max_length = df[col].astype(str).str.len().max()
+                            if max_length > 1000:
+                                logger.warning(f"Column '{col}' has extremely long values (max: {max_length} chars). Cleaning...")
+                                df[col] = df[col].apply(
+                                    lambda x: 'Mixed' if isinstance(x, str) and len(x) > 1000 else x
+                                )
+                                cleaned_columns.append(col)
+                    
+                    if cleaned_columns:
+                        st.warning(f"⚠️ Data quality issue detected and fixed: Columns {', '.join(cleaned_columns)} had concatenated values and were cleaned automatically.")
+                    
                     st.session_state.df = df
                     try:
                         df.to_csv(LAST_CSV_PATH, index=False)
@@ -1071,19 +1186,32 @@ with tab_auto:
                     
                     st.markdown("---")
                     if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
-                        with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                        # Create timing container
+                        timing_placeholder = st.empty()
+                        
+                        with st.spinner("🤖 AI Expert analyzing your data..."):
+                            auto_start = time.time()
                             expert = MediaAnalyticsExpert()
                             analysis = expert.analyze_all(df)
+                            auto_elapsed = time.time() - auto_start
+                            
+                            # Store timing
+                            analysis['timing'] = {'auto_analysis_seconds': round(auto_elapsed, 2)}
                             
                             # Enhance with B2B/B2C context if provided
                             if hasattr(st.session_state, 'campaign_context') and st.session_state.campaign_context:
                                 with st.spinner("🎯 Applying business context..."):
+                                    b2b_start = time.time()
                                     b2b_specialist = B2BSpecialistAgent()
                                     analysis = b2b_specialist.enhance_analysis(
                                         base_insights=analysis,
                                         campaign_context=st.session_state.campaign_context,
                                         campaign_data=df
                                     )
+                                    analysis['timing']['b2b_enhancement_seconds'] = round(time.time() - b2b_start, 2)
+                            
+                            # Show timing
+                            timing_placeholder.success(f"⏱️ Auto Analysis completed in **{auto_elapsed:.1f}s**")
                             
                             st.session_state.analysis_data = analysis
                             st.session_state.analysis_complete = True
@@ -1123,9 +1251,14 @@ with tab_auto:
 
                 st.markdown("---")
                 if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
-                    with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                    timing_placeholder = st.empty()
+                    with st.spinner("🤖 AI Expert analyzing your data..."):
+                        auto_start = time.time()
                         expert = MediaAnalyticsExpert()
                         analysis = expert.analyze_all(df)
+                        auto_elapsed = time.time() - auto_start
+                        analysis['timing'] = {'auto_analysis_seconds': round(auto_elapsed, 2)}
+                        timing_placeholder.success(f"⏱️ Auto Analysis completed in **{auto_elapsed:.1f}s**")
                         st.session_state.analysis_data = analysis
                         st.session_state.analysis_complete = True
                         st.rerun()
@@ -1470,9 +1603,14 @@ with tab_auto:
                         
                         st.markdown("---")
                         if st.button("🚀 Analyze Data & Generate Insights", type="primary", key="analyze_cloud"):
-                            with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                            timing_placeholder = st.empty()
+                            with st.spinner("🤖 AI Expert analyzing your data..."):
+                                auto_start = time.time()
                                 expert = MediaAnalyticsExpert()
                                 analysis = expert.analyze_all(df)
+                                auto_elapsed = time.time() - auto_start
+                                analysis['timing'] = {'auto_analysis_seconds': round(auto_elapsed, 2)}
+                                timing_placeholder.success(f"⏱️ Auto Analysis completed in **{auto_elapsed:.1f}s**")
                                 st.session_state.analysis_data = analysis
                                 st.session_state.analysis_complete = True
                                 st.rerun()
@@ -1561,9 +1699,14 @@ with tab_auto:
                             
                             st.markdown("---")
                             if st.button("🚀 Analyze Data & Generate Insights", type="primary"):
-                                with st.spinner("🤖 AI Expert analyzing your data (30-60s)..."):
+                                timing_placeholder = st.empty()
+                                with st.spinner("🤖 AI Expert analyzing your data..."):
+                                    auto_start = time.time()
                                     expert = MediaAnalyticsExpert()
                                     analysis = expert.analyze_all(df)
+                                    auto_elapsed = time.time() - auto_start
+                                    analysis['timing'] = {'auto_analysis_seconds': round(auto_elapsed, 2)}
+                                    timing_placeholder.success(f"⏱️ Auto Analysis completed in **{auto_elapsed:.1f}s**")
                                     st.session_state.analysis_data = analysis
                                     st.session_state.analysis_complete = True
                                     st.rerun()
@@ -1620,136 +1763,19 @@ with tab_auto:
         
         st.markdown("---")
         
-        # Channel-Specific Intelligence Analysis
-        st.markdown("## 🎯 Channel-Specific Intelligence")
+        # NOTE: Channel-Specific Intelligence moved to Deep Dive tab
+        # Store channel analysis for Deep Dive tab
+        if 'channel_analysis_data' not in st.session_state:
+            st.session_state.channel_analysis_data = None
         
-        # Initialize channel router
+        # Run channel analysis in background for Deep Dive tab
         try:
             channel_router = ChannelRouter()
-            
-            # Run channel-specific analysis
-            with st.spinner("🔍 Running channel-specific analysis..."):
-                channel_analysis = channel_router.route_and_analyze(df)
-            
-            # Display channel analysis results
-            if channel_analysis and channel_analysis.get('status') != 'error':
-                channel_type = channel_analysis.get('channel_type', 'Unknown')
-                platform = channel_analysis.get('platform', 'Unknown')
-                overall_health = channel_analysis.get('overall_health', 'unknown')
-                
-                # Health status color mapping
-                health_colors = {
-                    'excellent': '🟢',
-                    'good': '🟡',
-                    'average': '🟠',
-                    'needs_attention': '🟠',
-                    'needs_improvement': '🔴',
-                    'needs_optimization': '🔴',
-                    'poor': '🔴',
-                    'critical': '🔴',
-                    'critical_issues': '🔴',
-                    'unknown': '⚪'
-                }
-                
-                health_emoji = health_colors.get(overall_health, '⚪')
-                
-                # Display header with metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Channel Type", channel_type.capitalize())
-                with col2:
-                    st.metric("Platform", platform)
-                with col3:
-                    st.metric("Overall Health", f"{health_emoji} {overall_health.replace('_', ' ').title()}")
-                
-                # Display channel-specific insights
-                st.markdown("### 📊 Channel-Specific Insights")
-                
-                # Create tabs for different analysis areas
-                insight_areas = []
-                insight_data = []
-                
-                for key, value in channel_analysis.items():
-                    if isinstance(value, dict) and 'metric' in value:
-                        insight_areas.append(value['metric'])
-                        insight_data.append((key, value))
-                
-                if insight_areas:
-                    insight_tabs = st.tabs(insight_areas)
-                    
-                    for tab, (key, insight) in zip(insight_tabs, insight_data):
-                        with tab:
-                            # Display status
-                            status = insight.get('status', 'unknown')
-                            status_emoji = health_colors.get(status, '⚪')
-                            st.markdown(f"**Status:** {status_emoji} {status.replace('_', ' ').title()}")
-                            
-                            # Display findings
-                            findings = insight.get('findings', [])
-                            if findings:
-                                st.markdown("**Key Findings:**")
-                                for finding in findings:
-                                    st.markdown(f"- {finding}")
-                            
-                            # Display recommendation if available
-                            if 'recommendation' in insight:
-                                st.info(f"💡 **Recommendation:** {insight['recommendation']}")
-                            
-                            # Display metrics if available
-                            metric_keys = [k for k in insight.keys() if k not in ['metric', 'status', 'findings', 'recommendation']]
-                            if metric_keys:
-                                st.markdown("**Metrics:**")
-                                metric_cols = st.columns(min(len(metric_keys), 4))
-                                for idx, metric_key in enumerate(metric_keys[:4]):
-                                    metric_value = insight[metric_key]
-                                    if isinstance(metric_value, (int, float)):
-                                        metric_cols[idx].metric(
-                                            metric_key.replace('_', ' ').title(),
-                                            f"{metric_value:.2f}" if isinstance(metric_value, float) else str(metric_value)
-                                        )
-                
-                # Display recommendations
-                recommendations = channel_analysis.get('recommendations', [])
-                if recommendations:
-                    st.markdown("### 💡 Channel-Specific Recommendations")
-                    
-                    # Group by priority
-                    high_priority = [r for r in recommendations if r.get('priority') == 'high']
-                    medium_priority = [r for r in recommendations if r.get('priority') == 'medium']
-                    low_priority = [r for r in recommendations if r.get('priority') == 'low']
-                    
-                    if high_priority:
-                        st.markdown("#### 🔴 High Priority")
-                        for rec in high_priority:
-                            with st.expander(f"**{rec.get('area', 'General').replace('_', ' ').title()}**"):
-                                st.markdown(f"**Issue:** {rec.get('issue', 'N/A')}")
-                                st.markdown(f"**Recommendation:** {rec.get('recommendation', 'N/A')}")
-                                if 'expected_impact' in rec:
-                                    st.markdown(f"**Expected Impact:** {rec['expected_impact'].title()}")
-                    
-                    if medium_priority:
-                        st.markdown("#### 🟡 Medium Priority")
-                        for rec in medium_priority:
-                            with st.expander(f"**{rec.get('area', 'General').replace('_', ' ').title()}**"):
-                                st.markdown(f"**Recommendation:** {rec.get('recommendation', 'N/A')}")
-                    
-                    if low_priority:
-                        with st.expander("🟢 Low Priority Recommendations"):
-                            for rec in low_priority:
-                                st.markdown(f"- **{rec.get('area', 'General').replace('_', ' ').title()}:** {rec.get('recommendation', 'N/A')}")
-            
-            else:
-                # Show error or unavailable message
-                if channel_analysis.get('status') == 'error':
-                    st.warning(f"⚠️ Channel-specific analysis encountered an error: {channel_analysis.get('error', 'Unknown error')}")
-                else:
-                    st.info("ℹ️ Channel-specific analysis not available for this dataset")
-        
+            st.session_state.channel_analysis_data = channel_router.route_and_analyze(df)
         except Exception as e:
-            logger.error(f"Error in channel-specific analysis: {e}")
-            st.warning(f"⚠️ Channel-specific analysis unavailable: {str(e)}")
+            logger.warning(f"Channel analysis prep failed: {e}")
         
-        st.markdown("---")
+        # Channel-Specific Intelligence MOVED to Deep Dive tab
         
         # B2B/B2C Business Model Analysis
         if 'business_model_analysis' in analysis:
@@ -2065,355 +2091,28 @@ with tab_auto:
         
         st.markdown("---")
         
-        # Enhanced Reasoning with Pattern Recognition
-        st.markdown("## 🔍 Pattern Analysis & Insights")
+        # Pattern Analysis MOVED to Deep Dive tab
+        # Store pattern analysis for Deep Dive tab
+        pattern_analysis = None
+        if 'pattern_analysis_data' not in st.session_state:
+            st.session_state.pattern_analysis_data = None
         
         try:
-            # Initialize enhanced reasoning agent
             benchmark_engine = DynamicBenchmarkEngine() if hasattr(st.session_state, 'campaign_context') and st.session_state.campaign_context else None
             reasoning_agent = EnhancedReasoningAgent(
-                rag_retriever=None,  # Can be enhanced with RAG
+                rag_retriever=None,
                 benchmark_engine=benchmark_engine
             )
-            
-            # Run pattern analysis
-            with st.spinner("🤖 Analyzing patterns and trends..."):
-                pattern_analysis = reasoning_agent.analyze(
-                    campaign_data=df,
-                    channel_insights=None,
-                    campaign_context=st.session_state.campaign_context if hasattr(st.session_state, 'campaign_context') else None
-                )
-            
-            # Display pattern insights
-            if pattern_analysis.get('insights', {}).get('pattern_insights'):
-                st.markdown("### 💡 Key Pattern Insights")
-                for insight in pattern_analysis['insights']['pattern_insights']:
-                    if '📈' in insight or '✅' in insight:
-                        st.success(insight)
-                    elif '📉' in insight or '⚠️' in insight:
-                        st.warning(insight)
-                    elif '🎨' in insight or '👥' in insight or '⏰' in insight:
-                        st.error(insight)
-                    else:
-                        st.info(insight)
-            
-            # Display detected patterns in tabs
-            patterns = pattern_analysis.get('patterns', {})
-            pattern_tabs = []
-            pattern_data = []
-            
-            # Collect detected patterns
-            if patterns.get('trends', {}).get('detected'):
-                pattern_tabs.append("📈 Trends")
-                pattern_data.append(('trends', patterns['trends']))
-            
-            if patterns.get('anomalies', {}).get('detected'):
-                pattern_tabs.append("⚠️ Anomalies")
-                pattern_data.append(('anomalies', patterns['anomalies']))
-            
-            if patterns.get('creative_fatigue', {}).get('detected'):
-                pattern_tabs.append("🎨 Creative Fatigue")
-                pattern_data.append(('creative_fatigue', patterns['creative_fatigue']))
-            
-            if patterns.get('audience_saturation', {}).get('detected'):
-                pattern_tabs.append("👥 Audience Saturation")
-                pattern_data.append(('audience_saturation', patterns['audience_saturation']))
-            
-            if patterns.get('seasonality', {}).get('detected'):
-                pattern_tabs.append("📅 Seasonality")
-                pattern_data.append(('seasonality', patterns['seasonality']))
-            
-            if patterns.get('day_parting_opportunities', {}).get('detected'):
-                pattern_tabs.append("⏰ Day Parting")
-                pattern_data.append(('day_parting', patterns['day_parting_opportunities']))
-            
-            if pattern_tabs:
-                st.markdown("### 🔍 Detected Patterns")
-                tabs = st.tabs(pattern_tabs)
-                
-                for tab, (pattern_type, pattern_info) in zip(tabs, pattern_data):
-                    with tab:
-                        # Display pattern details
-                        if pattern_type == 'trends':
-                            st.write(f"**Direction**: {pattern_info.get('direction', 'unknown').title()}")
-                            st.write(f"**Description**: {pattern_info.get('description', 'N/A')}")
-                            
-                            if 'metrics' in pattern_info:
-                                st.markdown("**Metric Details**:")
-                                for metric, details in pattern_info['metrics'].items():
-                                    direction_emoji = '📈' if details['direction'] == 'improving' else '📉'
-                                    st.write(f"{direction_emoji} **{metric.upper()}**: {details['direction']} (R² = {details['r_squared']:.3f})")
-                        
-                        elif pattern_type == 'anomalies':
-                            st.write(f"**Description**: {pattern_info.get('description', 'N/A')}")
-                            
-                            for anomaly in pattern_info.get('anomalies', []):
-                                severity_color = '🔴' if anomaly['severity'] == 'high' else '🟡'
-                                st.warning(f"{severity_color} **{anomaly['metric']}**: {anomaly['count']} outliers detected ({anomaly['severity']} severity)")
-                        
-                        elif pattern_type == 'creative_fatigue':
-                            severity = pattern_info.get('severity', 'unknown')
-                            severity_emoji = '🔴' if severity == 'high' else '🟡'
-                            
-                            st.error(f"{severity_emoji} **Severity**: {severity.upper()}")
-                            
-                            evidence = pattern_info.get('evidence', {})
-                            if evidence:
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("Frequency", f"{evidence.get('frequency', 0):.1f}")
-                                with col2:
-                                    st.metric("CTR Decline", f"{evidence.get('ctr_decline', 0):.1%}")
-                                
-                                st.info(f"💡 **Recommendation**: {evidence.get('recommendation', 'N/A')}")
-                        
-                        elif pattern_type == 'audience_saturation':
-                            severity = pattern_info.get('severity', 'unknown')
-                            st.error(f"**Severity**: {severity.upper()}")
-                            
-                            evidence = pattern_info.get('evidence', {})
-                            if evidence:
-                                st.write(f"**Reach Trend**: {evidence.get('reach_trend', 'N/A')}")
-                                st.write(f"**Spend Trend**: {evidence.get('spend_trend', 'N/A')}")
-                                
-                                if 'average_frequency' in evidence:
-                                    st.metric("Average Frequency", f"{evidence['average_frequency']:.1f}")
-                            
-                            st.info(f"💡 **Recommendation**: {pattern_info.get('recommendation', 'N/A')}")
-                        
-                        elif pattern_type == 'seasonality':
-                            st.write(f"**Type**: {pattern_info.get('type', 'N/A')}")
-                            
-                            if 'best_day' in pattern_info:
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.success(f"**Best Day**: {pattern_info['best_day']}")
-                                with col2:
-                                    st.error(f"**Worst Day**: {pattern_info['worst_day']}")
-                                
-                                st.metric("Variation", f"{pattern_info.get('variation', 0):.1%}")
-                        
-                        elif pattern_type == 'day_parting':
-                            if pattern_info.get('type') == 'day_of_week':
-                                st.write("**Type**: Day of Week Pattern")
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.success("**Best Days**:")
-                                    for day in pattern_info.get('best_days', []):
-                                        st.write(f"• {day}")
-                                with col2:
-                                    st.error("**Worst Days**:")
-                                    for day in pattern_info.get('worst_days', []):
-                                        st.write(f"• {day}")
-                            else:
-                                if 'best_hours' in pattern_info:
-                                    st.success(f"**Best Hours**: {', '.join(map(str, pattern_info['best_hours']))}")
-                                    st.error(f"**Worst Hours**: {', '.join(map(str, pattern_info['worst_hours']))}")
-                            
-                            st.info(f"💡 **Recommendation**: {pattern_info.get('recommendation', 'N/A')}")
-            else:
-                st.info("ℹ️ No significant patterns detected. This could indicate stable performance or insufficient data for pattern analysis.")
-            
-            # Display pattern-based recommendations
-            if pattern_analysis.get('recommendations'):
-                st.markdown("### 💡 Pattern-Based Recommendations")
-                
-                # Group by priority
-                high_priority = [r for r in pattern_analysis['recommendations'] if r.get('priority') == 'high']
-                medium_priority = [r for r in pattern_analysis['recommendations'] if r.get('priority') == 'medium']
-                low_priority = [r for r in pattern_analysis['recommendations'] if r.get('priority') == 'low']
-                
-                if high_priority:
-                    st.markdown("#### 🔴 High Priority")
-                    for rec in high_priority:
-                        with st.expander(f"**{rec.get('category', 'General')}**"):
-                            st.write(f"**Issue**: {rec.get('issue', 'N/A')}")
-                            st.write(f"**Recommendation**: {rec.get('recommendation', 'N/A')}")
-                            st.write(f"**Expected Impact**: {rec.get('expected_impact', 'N/A').title()}")
-                
-                if medium_priority:
-                    st.markdown("#### 🟡 Medium Priority")
-                    for rec in medium_priority:
-                        with st.expander(f"**{rec.get('category', 'General')}**"):
-                            st.write(f"**Issue**: {rec.get('issue', 'N/A')}")
-                            st.write(f"**Recommendation**: {rec.get('recommendation', 'N/A')}")
-                
-                if low_priority:
-                    with st.expander("🟢 Low Priority Recommendations"):
-                        for rec in low_priority:
-                            st.write(f"• **{rec.get('category', 'General')}**: {rec.get('recommendation', 'N/A')}")
-        
+            pattern_analysis = reasoning_agent.analyze(
+                campaign_data=df,
+                channel_insights=None,
+                campaign_context=st.session_state.campaign_context if hasattr(st.session_state, 'campaign_context') else None
+            )
+            st.session_state.pattern_analysis_data = pattern_analysis
         except Exception as e:
-            logger.error(f"Error in pattern analysis: {e}")
-            st.warning(f"⚠️ Pattern analysis unavailable: {str(e)}")
+            logger.warning(f"Pattern analysis prep failed: {e}")
         
-        st.markdown("---")
-        
-        # Intelligent Visualization Section with Smart Filters
-        st.markdown("## 🎨 Intelligent Visualizations with Smart Filters")
-        
-        try:
-            # Initialize components
-            filter_engine = SmartFilterEngine()
-            viz_agent = EnhancedVisualizationAgent()
-            
-            # Prepare context for filters and visualizations
-            viz_context = {
-                'business_model': st.session_state.get('business_model', 'B2B'),
-                'target_roas': 2.5,
-                'benchmarks': {
-                    'ctr': 0.035,
-                    'roas': 2.5,
-                    'cpc': 4.5,
-                    'cpa': 75
-                }
-            }
-            
-            # ========================================
-            # SIDEBAR: Smart Filters
-            # ========================================
-            st.sidebar.markdown("---")
-            st.sidebar.header("🎛️ Smart Filters")
-            
-            # Option 1: Recommended Presets
-            st.sidebar.markdown("### ⭐ Quick Presets")
-            
-            recommended = FilterPresets.get_recommended_presets(viz_context)
-            preset_selected = None
-            
-            for preset_name in recommended[:3]:  # Show top 3
-                preset = FilterPresets.get_preset(preset_name, context=viz_context)
-                if preset:
-                    if st.sidebar.button(
-                        preset['name'],
-                        key=f"sidebar_preset_{preset_name}",
-                        use_container_width=True
-                    ):
-                        preset_selected = preset
-            
-            # Option 2: Interactive Filter Panel
-            st.sidebar.markdown("---")
-            filter_panel = InteractiveFilterPanel(filter_engine, df)
-            filtered_data = filter_panel.render(viz_context)
-            
-            # Apply preset if selected
-            if preset_selected:
-                filtered_data = filter_engine.apply_filters(df, preset_selected['filters'])
-                st.sidebar.success(f"✅ Preset applied: {preset_selected['name']}")
-            
-            # ========================================
-            # MAIN AREA: Filter Impact & Visualizations
-            # ========================================
-            
-            # Show filter impact
-            if len(filtered_data) < len(df):
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Original Rows", f"{len(df):,}")
-                col2.metric("Filtered Rows", f"{len(filtered_data):,}")
-                col3.metric("Reduction", f"{(1 - len(filtered_data)/len(df))*100:.1f}%")
-                st.info(f"📊 **Filters Active**: Analyzing {len(filtered_data):,} rows")
-            else:
-                st.info("ℹ️ No filters applied. Showing all data. Use sidebar to add filters.")
-            
-            # Add audience selector
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown("### 📊 Dashboard View")
-            with col2:
-                audience = st.selectbox(
-                    "Audience",
-                    options=["Executive", "Analyst"],
-                    help="Executive: 5-7 high-level charts | Analyst: 15-20 detailed charts",
-                    key="viz_audience"
-                )
-            
-            # Prepare insights from pattern analysis (using filtered data)
-            viz_insights = []
-            if pattern_analysis and pattern_analysis.get('insights'):
-                for idx, insight in enumerate(pattern_analysis['insights']):
-                    viz_insights.append({
-                        'id': f'pattern_{idx}',
-                        'title': insight.get('message', 'Pattern Insight'),
-                        'description': insight.get('message', ''),
-                        'priority': 10 - idx,
-                        'data': {}
-                    })
-            
-            # Create appropriate dashboard based on audience (using filtered data)
-            if audience == "Executive":
-                st.info("📊 **Executive Dashboard**: High-level overview with 5-7 key charts for quick decision-making")
-                
-                dashboard_viz = viz_agent.create_executive_dashboard(
-                    insights=viz_insights,
-                    campaign_data=filtered_data,  # Using filtered data!
-                    context=viz_context
-                )
-                
-                # Display executive charts
-                for viz in dashboard_viz:
-                    st.markdown(f"#### {viz['title']}")
-                    st.caption(viz['description'])
-                    st.plotly_chart(viz['chart'], use_container_width=True)
-                    st.markdown("---")
-                
-                st.success(f"✅ Executive dashboard complete: {len(dashboard_viz)} charts from filtered data")
-                
-            else:  # Analyst
-                st.info("🔬 **Analyst Dashboard**: Comprehensive analysis with 15-20 detailed charts for deep-dive exploration")
-                
-                dashboard_viz = viz_agent.create_analyst_dashboard(
-                    insights=viz_insights,
-                    campaign_data=filtered_data  # Using filtered data!
-                )
-                
-                # Group by section
-                sections = {}
-                for viz in dashboard_viz:
-                    section = viz.get('section', 'other')
-                    if section not in sections:
-                        sections[section] = []
-                    sections[section].append(viz)
-                
-                # Display analyst charts by section
-                for section, charts in sections.items():
-                    with st.expander(f"📊 {section.replace('_', ' ').title()} ({len(charts)} charts)", expanded=True):
-                        for viz in charts:
-                            st.markdown(f"##### {viz['title']}")
-                            st.plotly_chart(viz['chart'], use_container_width=True)
-                            st.markdown("---")
-                
-                st.success(f"✅ Analyst dashboard complete: {len(dashboard_viz)} charts across {len(sections)} sections from filtered data")
-            
-            # Add download option
-            st.markdown("### 💾 Export Dashboard")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📥 Download Charts as HTML", key="download_html"):
-                    st.info("Chart export functionality coming soon!")
-            with col2:
-                if st.button("📊 Generate PDF Report", key="download_pdf"):
-                    st.info("PDF report generation coming soon!")
-        
-        except Exception as e:
-            logger.error(f"Error in intelligent visualization: {e}")
-            st.warning(f"⚠️ Intelligent visualization unavailable: {str(e)}")
-        
-        st.markdown("---")
-
-        # Quick Navigation
-        st.markdown("## 🎯 Quick Navigation")
-        nav_buttons = [
-            ("📈 Metrics", "#key-performance-metrics"),
-            ("💡 Opportunities", "#opportunities-risks"),
-            ("📊 Analytics", "#performance-analytics"),
-            ("🧭 Overview", "#overview"),
-        ]
-
-        quick_nav_html = "<div class='quick-nav-grid'>" + "".join(
-            f"<a class='quick-nav-button' href='{href}'>{label}</a>" for label, href in nav_buttons
-        ) + "</div>"
-        st.markdown(quick_nav_html, unsafe_allow_html=True)
+        # REMOVED: Pattern Analysis, Dashboard View, Quick Navigation - now in Deep Dive tab
 
         # Removed action buttons as per user request
         
@@ -2456,6 +2155,7 @@ with tab_auto:
         
         if enable_rag_comparison and brief_summary:
             try:
+                rag_timing_placeholder = st.empty()
                 with st.spinner("🔬 Generating RAG-enhanced summary..."):
                     from src.utils.comparison_logger import ComparisonLogger
                     import uuid
@@ -2472,6 +2172,9 @@ with tab_auto:
                     start_time = time.time()
                     rag_result = analyzer._generate_executive_summary_with_rag(metrics, insights, recommendations)
                     rag_latency = time.time() - start_time
+                    
+                    # Show RAG timing prominently
+                    rag_timing_placeholder.info(f"⏱️ RAG Analysis completed in **{rag_latency:.1f}s**")
                     
                     if isinstance(rag_result, dict):
                         rag_brief_summary = _strip_light_markup(rag_result.get("brief", ""))
@@ -2513,6 +2216,27 @@ with tab_auto:
         
         # Display summaries
         if enable_rag_comparison and rag_brief_summary:
+            # Timing Summary Box
+            timing_data = analysis.get('timing', {})
+            auto_time = timing_data.get('auto_analysis_seconds', 0)
+            rag_time = rag_metadata.get('latency', 0) if rag_metadata else 0
+            total_time = auto_time + rag_time
+            
+            st.markdown("### ⏱️ Performance Timing")
+            timing_col1, timing_col2, timing_col3, timing_col4 = st.columns(4)
+            with timing_col1:
+                st.metric("Auto Analysis", f"{auto_time:.1f}s")
+            with timing_col2:
+                st.metric("RAG Analysis", f"{rag_time:.1f}s")
+            with timing_col3:
+                st.metric("Total Time", f"{total_time:.1f}s")
+            with timing_col4:
+                perf_stats = analysis.get('performance_stats', {})
+                if perf_stats.get('parallel_enabled'):
+                    st.metric("Mode", "⚡ Parallel")
+                else:
+                    st.metric("Mode", "Sequential")
+            
             # Side-by-side comparison
             st.markdown("### 📊 Comparison View")
             
@@ -3441,6 +3165,266 @@ with tab_auto:
                     st.plotly_chart(fig, width="stretch")
         
         st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Deep Dive Tab - Channel Intelligence, Pattern Analysis, Dashboard View
+# ---------------------------------------------------------------------------
+with tab_deepdive:
+    st.markdown("## 🔬 Deep Dive Analysis")
+    
+    if st.session_state.df is None or not st.session_state.analysis_complete:
+        st.info("📊 Complete Auto Analysis first to access Deep Dive features.")
+    else:
+        df = st.session_state.df
+        analysis = st.session_state.analysis_data
+        
+        # Create sub-tabs for Deep Dive sections
+        dd_channel, dd_patterns, dd_dashboard = st.tabs([
+            "🎯 Channel Intelligence",
+            "🔍 Pattern Analysis",
+            "📊 Dashboard View"
+        ])
+        
+        # Channel Intelligence Tab
+        with dd_channel:
+            st.markdown("### 🎯 Channel-Specific Intelligence")
+            
+            # Get channel/platform column
+            channel_col = None
+            for col in ['Platform', 'Channel', 'Source', 'Medium']:
+                if col in df.columns:
+                    channel_col = col
+                    break
+            
+            if channel_col:
+                st.success(f"📊 Analyzing by: **{channel_col}**")
+                
+                # Channel performance summary
+                channels = df[channel_col].unique()
+                st.markdown(f"#### 📈 Performance by {channel_col} ({len(channels)} found)")
+                
+                # Build channel metrics
+                channel_metrics = []
+                for channel in channels:
+                    ch_df = df[df[channel_col] == channel]
+                    metrics = {'Channel': channel, 'Records': len(ch_df)}
+                    
+                    # Add available metrics
+                    for metric_col in ['Spend', 'Impressions', 'Clicks', 'Conversions', 'CTR', 'CPC', 'CPA']:
+                        if metric_col in ch_df.columns:
+                            if metric_col in ['CTR', 'CPC', 'CPA']:
+                                metrics[metric_col] = ch_df[metric_col].mean()
+                            else:
+                                metrics[metric_col] = ch_df[metric_col].sum()
+                    channel_metrics.append(metrics)
+                
+                # Display as table
+                channel_df = pd.DataFrame(channel_metrics)
+                st.dataframe(channel_df, use_container_width=True)
+                
+                # Top/Bottom performers
+                if 'Spend' in channel_df.columns and 'Conversions' in channel_df.columns:
+                    channel_df['Efficiency'] = channel_df['Conversions'] / channel_df['Spend'].replace(0, 1)
+                    top_channel = channel_df.loc[channel_df['Efficiency'].idxmax(), 'Channel']
+                    bottom_channel = channel_df.loc[channel_df['Efficiency'].idxmin(), 'Channel']
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.success(f"🏆 **Top Performer**: {top_channel}")
+                    with col2:
+                        st.warning(f"⚠️ **Needs Attention**: {bottom_channel}")
+                
+                # Channel recommendations from analysis
+                if analysis and 'recommendations' in analysis:
+                    channel_recs = [r for r in analysis['recommendations'] 
+                                   if isinstance(r, dict) and 'channel' in str(r).lower()]
+                    if channel_recs:
+                        st.markdown("#### 💡 Channel Recommendations")
+                        for rec in channel_recs[:3]:
+                            st.info(f"• {rec.get('recommendation', rec.get('text', str(rec)))}")
+            else:
+                st.info("ℹ️ No channel/platform column found in data. Upload data with Platform or Channel column.")
+        
+        # Pattern Analysis Tab
+        with dd_patterns:
+            st.markdown("### 🔍 Pattern Analysis & Insights")
+            
+            # Use insights from main analysis
+            insights = analysis.get('insights', []) if analysis else []
+            
+            if insights:
+                st.markdown("#### 💡 Key Insights from Analysis")
+                for idx, insight in enumerate(insights[:10], 1):
+                    if isinstance(insight, dict):
+                        title = insight.get('title', insight.get('insight', f'Insight {idx}'))
+                        impact = insight.get('impact', 'medium')
+                        emoji = '🔴' if impact == 'high' else '🟡' if impact == 'medium' else '🟢'
+                        st.markdown(f"{emoji} **{title}**")
+                        if 'description' in insight:
+                            st.caption(insight['description'])
+                    else:
+                        st.info(f"• {insight}")
+            else:
+                st.info("ℹ️ No pattern insights available yet.")
+            
+            # Show data trends if date column exists
+            date_col = None
+            for col in ['Date', 'date', 'DATE', 'Day', 'Week', 'Month']:
+                if col in df.columns:
+                    date_col = col
+                    break
+            
+            if date_col:
+                st.markdown("#### 📈 Time-Based Trends")
+                
+                # Aggregate by date
+                df_trend = df.copy()
+                df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
+                df_trend = df_trend.dropna(subset=[date_col])
+                
+                if len(df_trend) > 0:
+                    # Find numeric columns to plot
+                    numeric_cols = [c for c in ['Spend', 'Impressions', 'Clicks', 'Conversions', 'CTR'] 
+                                   if c in df_trend.columns]
+                    
+                    if numeric_cols:
+                        metric_to_plot = st.selectbox("Select metric to view trend:", numeric_cols, key="dd_trend_metric")
+                        
+                        daily_data = df_trend.groupby(date_col)[metric_to_plot].sum().reset_index()
+                        
+                        import plotly.express as px
+                        fig = px.line(daily_data, x=date_col, y=metric_to_plot, 
+                                     title=f"{metric_to_plot} Over Time")
+                        fig.update_layout(height=350)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Calculate trend
+                        if len(daily_data) >= 2:
+                            first_half = daily_data[metric_to_plot].iloc[:len(daily_data)//2].mean()
+                            second_half = daily_data[metric_to_plot].iloc[len(daily_data)//2:].mean()
+                            change = ((second_half - first_half) / first_half * 100) if first_half > 0 else 0
+                            
+                            if change > 5:
+                                st.success(f"📈 **Upward Trend**: {metric_to_plot} increased by {change:.1f}%")
+                            elif change < -5:
+                                st.warning(f"📉 **Downward Trend**: {metric_to_plot} decreased by {abs(change):.1f}%")
+                            else:
+                                st.info(f"➡️ **Stable**: {metric_to_plot} relatively flat ({change:+.1f}%)")
+            
+            # Show recommendations
+            recommendations = analysis.get('recommendations', []) if analysis else []
+            if recommendations:
+                st.markdown("#### 💡 Recommendations")
+                for rec in recommendations[:5]:
+                    if isinstance(rec, dict):
+                        priority = rec.get('priority', 'medium')
+                        emoji = '🔴' if priority == 'high' else '🟡' if priority == 'medium' else '🟢'
+                        text = rec.get('recommendation', rec.get('text', str(rec)))
+                        st.markdown(f"{emoji} {text}")
+                    else:
+                        st.markdown(f"• {rec}")
+        
+        # Dashboard View Tab
+        with dd_dashboard:
+            st.markdown("### 📊 Dashboard View")
+            
+            # Build simple charts based on available data
+            import plotly.express as px
+            import plotly.graph_objects as go
+            
+            charts_created = 0
+            
+            # 1. Spend Distribution (if Platform/Channel exists)
+            channel_col = None
+            for col in ['Platform', 'Channel', 'Source']:
+                if col in df.columns:
+                    channel_col = col
+                    break
+            
+            if channel_col and 'Spend' in df.columns:
+                st.markdown("#### 💰 Spend Distribution")
+                spend_by_channel = df.groupby(channel_col)['Spend'].sum().reset_index()
+                fig = px.pie(spend_by_channel, values='Spend', names=channel_col, 
+                            title=f"Spend by {channel_col}")
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+                charts_created += 1
+            
+            # 2. Performance Metrics Overview
+            st.markdown("#### 📈 Key Metrics Summary")
+            metric_cols = []
+            for col in ['Spend', 'Impressions', 'Clicks', 'Conversions']:
+                if col in df.columns:
+                    metric_cols.append(col)
+            
+            if metric_cols:
+                cols = st.columns(len(metric_cols))
+                for i, col in enumerate(metric_cols):
+                    with cols[i]:
+                        total = df[col].sum()
+                        if col == 'Spend':
+                            st.metric(col, f"${total:,.0f}")
+                        else:
+                            st.metric(col, f"{total:,.0f}")
+                charts_created += 1
+            
+            # 3. CTR/CPC Analysis (if available)
+            if 'CTR' in df.columns and channel_col:
+                st.markdown("#### 📊 CTR by Channel")
+                ctr_by_channel = df.groupby(channel_col)['CTR'].mean().reset_index()
+                fig = px.bar(ctr_by_channel, x=channel_col, y='CTR', 
+                            title=f"Average CTR by {channel_col}")
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+                charts_created += 1
+            
+            # 4. Conversions trend (if date exists)
+            date_col = None
+            for col in ['Date', 'date', 'Day']:
+                if col in df.columns:
+                    date_col = col
+                    break
+            
+            if date_col and 'Conversions' in df.columns:
+                st.markdown("#### 📈 Conversions Over Time")
+                df_time = df.copy()
+                df_time[date_col] = pd.to_datetime(df_time[date_col], errors='coerce')
+                df_time = df_time.dropna(subset=[date_col])
+                
+                if len(df_time) > 0:
+                    daily_conv = df_time.groupby(date_col)['Conversions'].sum().reset_index()
+                    fig = px.area(daily_conv, x=date_col, y='Conversions', 
+                                 title="Daily Conversions")
+                    fig.update_layout(height=350)
+                    st.plotly_chart(fig, use_container_width=True)
+                    charts_created += 1
+            
+            # 5. Funnel metrics if available
+            funnel_col = None
+            for col in ['Funnel_Stage', 'Funnel', 'Stage']:
+                if col in df.columns:
+                    funnel_col = col
+                    break
+            
+            if funnel_col and 'Spend' in df.columns:
+                st.markdown("#### 🔄 Funnel Performance")
+                funnel_data = df.groupby(funnel_col).agg({
+                    'Spend': 'sum',
+                    'Clicks': 'sum' if 'Clicks' in df.columns else lambda x: 0,
+                    'Conversions': 'sum' if 'Conversions' in df.columns else lambda x: 0
+                }).reset_index()
+                
+                fig = px.bar(funnel_data, x=funnel_col, y='Spend', 
+                            title=f"Spend by {funnel_col}")
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+                charts_created += 1
+            
+            if charts_created > 0:
+                st.success(f"✅ Dashboard complete: {charts_created} charts generated")
+            else:
+                st.warning("⚠️ Not enough data columns to generate charts. Need: Spend, Platform/Channel, Date, etc.")
 
 
 # ---------------------------------------------------------------------------

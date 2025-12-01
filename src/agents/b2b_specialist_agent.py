@@ -345,7 +345,7 @@ class B2BSpecialistAgent:
             elif level == TargetAudienceLevel.VP_DIRECTOR:
                 analysis['findings'].append("📊 Targeting VP/Director: Balance strategic and tactical messaging")
                 analysis['recommendation'] = "Mix of LinkedIn, search, and industry content"
-                analysis['expected_cpc'] = "Medium-High ($8-15)")
+                analysis['expected_cpc'] = "Medium-High ($8-15)"
                 analysis['expected_conversion_rate'] = "Medium (3-5%)"
             elif level == TargetAudienceLevel.MANAGER:
                 analysis['findings'].append("🎯 Targeting Managers: Focus on practical solutions and efficiency")
