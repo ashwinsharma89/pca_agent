@@ -30,6 +30,7 @@ from .error_handlers import setup_exception_handlers
 from .exceptions import RateLimitExceededError
 from ..utils import setup_logger
 from ..database.connection import get_db_manager
+from ..utils.opentelemetry_config import setup_opentelemetry
 
 # Initialize logger
 setup_logger()
@@ -48,6 +49,9 @@ app = FastAPI(
 
 # Setup exception handlers (MUST be before other middleware)
 setup_exception_handlers(app)
+
+# Setup OpenTelemetry (if enabled)
+setup_opentelemetry(app)
 
 # Add rate limiter to app state
 app.state.limiter = limiter

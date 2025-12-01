@@ -22,23 +22,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "
 # Security scheme
 security = HTTPBearer()
 
-# In-memory user store (replace with database in production)
-USERS_DB = {
-    "admin": {
-        "username": "admin",
-        "email": "admin@example.com",
-        "hashed_password": bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode(),
-        "role": "admin",
-        "tier": "enterprise"
-    },
-    "user": {
-        "username": "user",
-        "email": "user@example.com",
-        "hashed_password": bcrypt.hashpw(b"user123", bcrypt.gensalt()).decode(),
-        "role": "user",
-        "tier": "free"
-    }
-}
+# NOTE: User authentication now uses database
+# See src/services/user_service.py for user management
+# See src/api/v1/user_management.py for user endpoints
+# Use scripts/init_users.py to create initial admin user
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -55,17 +42,56 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
-def get_user(username: str) -> Optional[Dict[str, Any]]:
+def get_user(username: str, db=None) -> Optional[Dict[str, Any]]:
     """
     Get user from database.
     
     Args:
         username: Username
+        db: Database session (optional, for backward compatibility)
         
     Returns:
         User dict or None
+        
+    Note:
+        This function is kept for backward compatibility.
+        For new code, use UserService from src/services/user_service.py
     """
-    return USERS_DB.get(username)
+    if db is None:
+        # Fallback: Try to get database session
+        try:
+            from src.database.connection import get_db_manager
+            db_manager = get_db_manager()
+            db = db_manager.get_session_direct()
+        except Exception:
+            logger.warning("Could not get database session for user lookup")
+            return None
+    
+    try:
+        from src.services.user_service import UserService
+        user_service = UserService(db)
+        user_model = user_service.get_user_by_username(username)
+        
+        if not user_model:
+            return None
+        
+        # Convert to dict format for compatibility
+        return {
+            "username": user_model.username,
+            "email": user_model.email,
+            "hashed_password": user_model.hashed_password,
+            "role": user_model.role,
+            "tier": user_model.tier or "free"
+        }
+    except Exception as e:
+        logger.error(f"Error getting user from database: {e}")
+        return None
+    finally:
+        if db:
+            try:
+                db.close()
+            except:
+                pass
 
 
 def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
@@ -202,9 +228,9 @@ async def get_current_active_admin(
     return current_user
 
 
-def create_user(username: str, email: str, password: str, role: str = "user", tier: str = "free") -> Dict[str, Any]:
+def create_user(username: str, email: str, password: str, role: str = "user", tier: str = "free", db=None) -> Dict[str, Any]:
     """
-    Create a new user (for testing/demo purposes).
+    Create a new user in database.
     
     Args:
         username: Username
@@ -212,21 +238,58 @@ def create_user(username: str, email: str, password: str, role: str = "user", ti
         password: Plain password
         role: User role
         tier: User tier
+        db: Database session (optional)
         
     Returns:
         Created user dict
+        
+    Note:
+        This function is kept for backward compatibility.
+        For new code, use UserService from src/services/user_service.py
+        Or use scripts/init_users.py to create users
     """
-    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    if db is None:
+        try:
+            from src.database.connection import get_db_manager
+            db_manager = get_db_manager()
+            db = db_manager.get_session_direct()
+        except Exception as e:
+            logger.error(f"Could not get database session: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Database connection failed"
+            )
     
-    user = {
-        "username": username,
-        "email": email,
-        "hashed_password": hashed_password,
-        "role": role,
-        "tier": tier
-    }
-    
-    USERS_DB[username] = user
-    logger.info(f"Created user: {username}")
-    
-    return user
+    try:
+        from src.services.user_service import UserService
+        user_service = UserService(db)
+        
+        user_model = user_service.create_user(
+            username=username,
+            email=email,
+            password=password,
+            role=role,
+            tier=tier
+        )
+        
+        logger.info(f"Created user: {username}")
+        
+        return {
+            "username": user_model.username,
+            "email": user_model.email,
+            "hashed_password": user_model.hashed_password,
+            "role": user_model.role,
+            "tier": user_model.tier or "free"
+        }
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to create user: {str(e)}"
+        )
+    finally:
+        if db:
+            try:
+                db.close()
+            except:
+                pass
