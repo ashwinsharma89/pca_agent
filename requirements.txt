@@ -1,6 +1,6 @@
 # Core
 streamlit
-fastapi==0.109.0
+fastapi>=0.109.1  # CVE-2024-24762 fix
 uvicorn>=0.38.0
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
@@ -18,11 +18,11 @@ asyncio>=4.0.0
 openai>=1.12.0
 anthropic==0.34.0
 langchain==0.1.16
-langchain-core==0.1.52
+langchain-core>=0.1.53  # CVE-2024-10940 fix
 langchain-openai==0.0.8
 langchain-anthropic==0.1.4
 langgraph==0.0.32
-langsmith==0.1.17
+langsmith>=0.1.84  # PVE-2024-72059 fix
 google-generativeai
 
 # Vector Database
@@ -36,16 +36,16 @@ hiredis>=2.2.0  # C parser for better performance
 
 # Computer Vision
 opencv-python-headless==4.10.0.84
-Pillow
+Pillow>=10.2.0  # Security fixes
 pytesseract==0.3.10
 pdf2image==1.17.0
 
-# Data Processing - NO VERSION PINS
-pandas
-numpy
-python-dateutil
-duckdb
-openpyxl
+# Data Processing - Pinned for security
+pandas>=2.0.0
+numpy>=1.26.0
+python-dateutil>=2.8.2
+duckdb>=0.9.0
+openpyxl>=3.1.0
 
 # Security
 pyjwt

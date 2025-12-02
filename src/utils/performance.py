@@ -221,9 +221,10 @@ class SemanticCache:
         words = normalized.split()
         
         # Create a simple 128-dim pseudo-embedding
+        # Using SHA-256 instead of MD5 (MD5 is cryptographically weak)
         embedding = [0.0] * 128
         for i, word in enumerate(words):
-            word_hash = int(hashlib.md5(word.encode()).hexdigest(), 16)
+            word_hash = int(hashlib.sha256(word.encode()).hexdigest(), 16)
             for j in range(128):
                 embedding[j] += ((word_hash >> j) & 1) * (1.0 / (i + 1))
         

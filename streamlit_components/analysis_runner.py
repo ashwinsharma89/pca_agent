@@ -267,10 +267,24 @@ class AnalysisHistoryComponent:
         st.subheader("📜 Analysis History")
         
         for i, entry in enumerate(reversed(st.session_state.analysis_history), 1):
-            with st.expander(f"Analysis {i} - {entry['timestamp'][:19]}"):
-                st.metric("Execution Time", f"{entry['execution_time']:.2f}s")
+            # Safely handle None or missing values
+            if entry is None:
+                continue
+            
+            timestamp = entry.get('timestamp', 'Unknown')
+            if timestamp and isinstance(timestamp, str) and len(timestamp) > 19:
+                timestamp = timestamp[:19]
+            
+            execution_time = entry.get('execution_time', 0)
+            # Ensure execution_time is a number
+            if execution_time is None or not isinstance(execution_time, (int, float)):
+                execution_time = 0.0
+            
+            with st.expander(f"Analysis {i} - {timestamp}"):
+                st.metric("Execution Time", f"{execution_time:.2f}s")
                 
                 if st.button(f"Load Analysis {i}", key=f"load_{i}"):
-                    st.session_state.analysis_data = entry['results']
-                    st.session_state.analysis_complete = True
-                    st.rerun()
+                    if 'results' in entry:
+                        st.session_state.analysis_data = entry['results']
+                        st.session_state.analysis_complete = True
+                        st.rerun()

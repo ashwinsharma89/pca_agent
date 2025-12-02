@@ -66,12 +66,14 @@ class AuthenticationManager:
             self._create_default_admin()
     
     def _create_default_admin(self):
-        """Create default admin user."""
+        """Create default admin user with secure random password."""
+        # Generate cryptographically secure random password
         admin_password = secrets.token_urlsafe(16)
+        
         users = {
             "admin": {
                 "username": "admin",
-                "password_hash": self._hash_password("admin123"),  # Change in production!
+                "password_hash": self._hash_password(admin_password),
                 "email": "admin@company.com",
                 "role": UserRole.ADMIN.value,
                 "created_at": datetime.now().isoformat(),
@@ -84,7 +86,11 @@ class AuthenticationManager:
         with open(self.users_file, 'w') as f:
             json.dump(users, f, indent=2)
         
-        logger.warning("Created default admin user. Username: admin, Password: admin123 - CHANGE IMMEDIATELY!")
+        # Log the generated password securely - in production, use a secure channel
+        logger.warning(
+            f"Created default admin user. Username: admin, Password: {admin_password} "
+            "- Store this securely and change immediately!"
+        )
     
     def _hash_password(self, password: str) -> str:
         """Hash password using bcrypt."""

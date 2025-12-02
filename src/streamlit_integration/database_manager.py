@@ -136,11 +136,16 @@ class StreamlitDatabaseManager:
         try:
             campaign_service = _self.get_campaign_service()
             
-            # Parse filters from key
+            # Parse filters from key safely
             filters = None
             if filter_key != "all":
-                # Simple parsing - in production, use proper serialization
-                filters = eval(filter_key)
+                # Use ast.literal_eval for safe parsing (only allows literals)
+                import ast
+                try:
+                    filters = ast.literal_eval(filter_key)
+                except (ValueError, SyntaxError):
+                    logger.warning(f"Invalid filter key format: {filter_key}")
+                    filters = None
             
             campaigns = campaign_service.get_campaigns(filters=filters, limit=limit)
             return pd.DataFrame(campaigns) if campaigns else pd.DataFrame()
