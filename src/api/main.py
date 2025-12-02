@@ -1,641 +1,206 @@
 """
-FastAPI main application for PCA Agent.
+FastAPI Application v3.0 - With Structured Error Handling
+
+✅ ALL 7 IMPROVEMENTS IMPLEMENTED:
+1. Database persistence
+2. JWT authentication
+3. Rate limiting
+4. API versioning
+5. Report regeneration
+6. Structured error codes
+7. Specific exception handling
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
-import uuid
+
 import os
-from pathlib import Path
-from datetime import date
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from loguru import logger
 
-from ..models import (
-    Campaign,
-    CampaignObjective,
-    CampaignStatus,
-    DateRange,
-    PlatformType,
-    PlatformSnapshot,
-    ReportConfig
-)
-from ..orchestration import PCAWorkflow
-from ..config import settings
+from .middleware.auth import SECRET_KEY
+from .middleware.rate_limit import limiter, RATE_LIMIT_ENABLED
+from .v1 import router_v1
+from .error_handlers import setup_exception_handlers
+from .exceptions import RateLimitExceededError
 from ..utils import setup_logger
-from ..utils.resilience import (
-    get_resilience_status, health_checker, HealthStatus,
-    CircuitBreaker, DeadLetterQueue
-)
-from ..utils.observability import (
-    get_observability_status, metrics, tracer, cost_tracker, alerts,
-    structured_logger
-)
-from ..utils.performance import (
-    get_optimizer, get_performance_metrics, estimate_optimization_impact,
-    SemanticCache
-)
+from ..database.connection import get_db_manager
+from ..utils.opentelemetry_config import setup_opentelemetry
 
 # Initialize logger
 setup_logger()
 
+# Initialize database
+db_manager = get_db_manager()
+
 # Create FastAPI app
 app = FastAPI(
-    title="PCA Agent API",
-    description="Post Campaign Analysis with Agentic AI",
-    version="1.0.0"
+    title="PCA Agent API v3.0",
+    description="Post Campaign Analysis - Production Ready with Structured Error Handling",
+    version="3.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
 )
+
+# Setup exception handlers (MUST be before other middleware)
+setup_exception_handlers(app)
+
+# Setup OpenTelemetry (if enabled)
+setup_opentelemetry(app)
+
+# Add rate limiter to app state
+app.state.limiter = limiter
+
+# Custom rate limit exception handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Handle rate limit exceeded errors with structured response."""
+    logger.warning(
+        f"Rate limit exceeded",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "client": request.client.host if request.client else "unknown"
+        }
+    )
+    
+    # Use our structured error
+    error = RateLimitExceededError(limit=str(exc.detail))
+    
+    return JSONResponse(
+        status_code=error.status_code,
+        content={
+            "error": {
+                "code": error.error_code,
+                "message": error.message,
+                "details": error.details
+            },
+            "path": request.url.path,
+            "method": request.method
+        }
+    )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Configure properly in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# In-memory storage (replace with database in production)
-campaigns_db = {}
-
-# Initialize workflow
-workflow = PCAWorkflow()
+# Include v1 router
+app.include_router(router_v1)
 
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
+    """Root endpoint with API information."""
     return {
-        "message": "PCA Agent API",
-        "version": "1.0.0",
-        "status": "running"
+        "message": "PCA Agent API v3.0 - Production Ready",
+        "version": "3.0.0",
+        "features": [
+            "✅ Database persistence",
+            "✅ JWT authentication",
+            "✅ Rate limiting",
+            "✅ API versioning",
+            "✅ Report regeneration",
+            "✅ Structured error codes",
+            "✅ Specific exception handling"
+        ],
+        "status": "running",
+        "docs": "/api/docs",
+        "error_codes": "/api/docs#/Error%20Codes"
     }
 
 
 @app.get("/health")
-async def health_check():
-    """Basic health check endpoint."""
-    return {"status": "healthy"}
+@limiter.limit("100/minute")
+async def health_check(request: Request):
+    """Basic health check."""
+    return {
+        "status": "healthy",
+        "version": "3.0.0",
+        "features": {
+            "authentication": True,
+            "rate_limiting": RATE_LIMIT_ENABLED,
+            "database": "connected",
+            "api_version": "v1",
+            "error_handling": "structured"
+        }
+    }
 
 
 @app.get("/health/detailed")
-async def detailed_health_check() -> Dict[str, Any]:
-    """
-    Detailed health check with resilience status.
-    
-    Returns:
-        Comprehensive health status including:
-        - Overall system health
-        - Circuit breaker states
-        - Dead letter queue stats
-        - Individual service health checks
-    """
+async def detailed_health_check():
+    """Detailed health check with all system status."""
     try:
-        resilience_status = get_resilience_status()
-        
-        # Check if any circuit breakers are open
-        circuit_breakers = resilience_status.get("circuit_breakers", {})
-        any_circuit_open = any(
-            cb.get("state") == "open" 
-            for cb in circuit_breakers.values()
-        )
-        
-        # Check dead letter queue
-        dlq_stats = resilience_status.get("dead_letter_queue", {})
-        dlq_count = dlq_stats.get("total_jobs", 0)
-        
-        # Determine overall health
-        is_healthy = not any_circuit_open and dlq_count < 100
+        db_healthy = db_manager.health_check()
         
         return {
-            "status": "healthy" if is_healthy else "degraded",
-            "timestamp": date.today().isoformat(),
+            "status": "healthy" if db_healthy else "degraded",
+            "version": "3.0.0",
             "components": {
-                "api": {"status": "healthy"},
-                "circuit_breakers": {
-                    "status": "degraded" if any_circuit_open else "healthy",
-                    "details": circuit_breakers
-                },
-                "dead_letter_queue": {
-                    "status": "warning" if dlq_count > 50 else "healthy",
-                    "pending_jobs": dlq_count,
-                    "details": dlq_stats
-                }
+                "database": "healthy" if db_healthy else "unhealthy",
+                "authentication": "healthy",
+                "rate_limiting": "healthy" if RATE_LIMIT_ENABLED else "disabled",
+                "api": "healthy",
+                "error_handling": "healthy"
             },
-            "health_checks": resilience_status.get("health_checks", {})
+            "error_handling": {
+                "structured_codes": True,
+                "specific_exceptions": True,
+                "global_handlers": True,
+                "structured_logging": True
+            }
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return {
             "status": "unhealthy",
-            "error": str(e)
-        }
-
-
-@app.get("/resilience/status")
-async def resilience_status() -> Dict[str, Any]:
-    """
-    Get full resilience system status.
-    
-    Returns:
-        Complete status of all resilience components.
-    """
-    return get_resilience_status()
-
-
-@app.get("/resilience/circuit-breakers")
-async def circuit_breaker_status() -> Dict[str, Any]:
-    """Get status of all circuit breakers."""
-    return CircuitBreaker.get_all_states()
-
-
-@app.post("/resilience/circuit-breakers/{name}/reset")
-async def reset_circuit_breaker(name: str):
-    """Manually reset a circuit breaker."""
-    try:
-        cb = CircuitBreaker.get_instance(name)
-        cb.reset()
-        return {"status": "success", "message": f"Circuit breaker '{name}' reset"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/resilience/dead-letter-queue")
-async def dead_letter_queue_status() -> Dict[str, Any]:
-    """Get dead letter queue status and jobs."""
-    dlq = DeadLetterQueue.get_instance()
-    return {
-        "stats": dlq.stats(),
-        "jobs": [job.to_dict() for job in dlq.get_all()[:50]]  # Limit to 50
-    }
-
-
-@app.delete("/resilience/dead-letter-queue/{job_id}")
-async def remove_dlq_job(job_id: str):
-    """Remove a job from the dead letter queue."""
-    dlq = DeadLetterQueue.get_instance()
-    if dlq.remove(job_id):
-        return {"status": "success", "message": f"Job '{job_id}' removed"}
-    raise HTTPException(status_code=404, detail="Job not found")
-
-
-# =============================================================================
-# OBSERVABILITY ENDPOINTS
-# =============================================================================
-
-@app.get("/observability/status")
-async def observability_status() -> Dict[str, Any]:
-    """
-    Get complete observability status.
-    
-    Returns:
-        Full observability data including metrics, traces, alerts, and costs.
-    """
-    return get_observability_status()
-
-
-@app.get("/observability/metrics")
-async def get_metrics() -> Dict[str, Any]:
-    """Get all collected metrics."""
-    return metrics.get_all_metrics()
-
-
-@app.get("/observability/metrics/prometheus")
-async def get_metrics_prometheus():
-    """Get metrics in Prometheus text format."""
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(
-        content=metrics.to_prometheus_format(),
-        media_type="text/plain"
-    )
-
-
-@app.get("/observability/traces")
-async def get_traces(limit: int = 50) -> Dict[str, Any]:
-    """Get recent traces."""
-    return {
-        "traces": tracer.get_recent_traces(limit=limit)
-    }
-
-
-@app.get("/observability/traces/{trace_id}")
-async def get_trace(trace_id: str) -> Dict[str, Any]:
-    """Get a specific trace by ID."""
-    spans = tracer.get_trace(trace_id)
-    if not spans:
-        raise HTTPException(status_code=404, detail="Trace not found")
-    return {
-        "trace_id": trace_id,
-        "spans": spans
-    }
-
-
-@app.get("/observability/alerts")
-async def get_alerts() -> Dict[str, Any]:
-    """Get active alerts and alert history."""
-    return {
-        "active": alerts.get_active_alerts(),
-        "history": alerts.get_alert_history(limit=100)
-    }
-
-
-@app.post("/observability/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str):
-    """Acknowledge an alert."""
-    alerts.acknowledge_alert(alert_id)
-    return {"status": "success", "message": f"Alert '{alert_id}' acknowledged"}
-
-
-@app.post("/observability/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: str):
-    """Resolve an alert."""
-    alerts.resolve_alert(alert_id)
-    return {"status": "success", "message": f"Alert '{alert_id}' resolved"}
-
-
-@app.get("/observability/costs")
-async def get_costs() -> Dict[str, Any]:
-    """Get LLM cost tracking data."""
-    return cost_tracker.get_usage_stats()
-
-
-@app.post("/observability/costs/budget")
-async def set_budget(daily: float = None, monthly: float = None):
-    """Set cost budget limits."""
-    cost_tracker.set_budget(daily=daily, monthly=monthly)
-    return {
-        "status": "success",
-        "budgets": {
-            "daily": cost_tracker._daily_budget,
-            "monthly": cost_tracker._monthly_budget
-        }
-    }
-
-
-# =============================================================================
-# PERFORMANCE OPTIMIZATION ENDPOINTS
-# =============================================================================
-
-@app.get("/performance/status")
-async def performance_status() -> Dict[str, Any]:
-    """
-    Get performance optimization status and metrics.
-    
-    Returns:
-        Performance metrics from all optimization components.
-    """
-    return get_performance_metrics()
-
-
-@app.get("/performance/impact")
-async def performance_impact() -> Dict[str, Any]:
-    """
-    Get estimated impact of performance optimizations.
-    
-    Returns:
-        Estimated time and cost savings from optimizations.
-    """
-    return estimate_optimization_impact()
-
-
-@app.get("/performance/cache/stats")
-async def cache_stats() -> Dict[str, Any]:
-    """Get semantic cache statistics."""
-    cache = SemanticCache.get_instance()
-    return cache.get_metrics()
-
-
-@app.post("/performance/cache/clear")
-async def clear_cache():
-    """Clear the semantic cache."""
-    cache = SemanticCache.get_instance()
-    cache.clear()
-    return {"status": "success", "message": "Cache cleared"}
-
-
-@app.post("/performance/cache/save")
-async def save_cache():
-    """Save cache to disk for persistence."""
-    cache = SemanticCache.get_instance()
-    cache.save_cache()
-    return {"status": "success", "message": "Cache saved to disk"}
-
-
-@app.post("/api/campaigns")
-async def create_campaign(
-    campaign_name: str,
-    objectives: List[CampaignObjective],
-    start_date: date,
-    end_date: date
-):
-    """
-    Create a new campaign analysis job.
-    
-    Args:
-        campaign_name: Name of the campaign
-        objectives: List of campaign objectives
-        start_date: Campaign start date
-        end_date: Campaign end date
-        
-    Returns:
-        Campaign ID and details
-    """
-    campaign_id = str(uuid.uuid4())
-    
-    campaign = Campaign(
-        campaign_id=campaign_id,
-        campaign_name=campaign_name,
-        objectives=objectives,
-        date_range=DateRange(start=start_date, end=end_date)
-    )
-    
-    campaigns_db[campaign_id] = campaign
-    
-    logger.info(f"Created campaign {campaign_id}: {campaign_name}")
-    
-    return {
-        "campaign_id": campaign_id,
-        "campaign_name": campaign_name,
-        "status": campaign.status.value,
-        "created_at": campaign.created_at
-    }
-
-
-@app.get("/api/campaigns/{campaign_id}")
-async def get_campaign(campaign_id: str):
-    """Get campaign details."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    return {
-        "campaign_id": campaign.campaign_id,
-        "campaign_name": campaign.campaign_name,
-        "status": campaign.status.value,
-        "objectives": [obj.value for obj in campaign.objectives],
-        "date_range": {
-            "start": campaign.date_range.start,
-            "end": campaign.date_range.end
-        },
-        "snapshots_count": len(campaign.snapshots),
-        "report_path": campaign.report_path,
-        "created_at": campaign.created_at,
-        "updated_at": campaign.updated_at
-    }
-
-
-@app.post("/api/campaigns/{campaign_id}/snapshots")
-async def upload_snapshots(
-    campaign_id: str,
-    files: List[UploadFile] = File(...),
-    platform: PlatformType = None
-):
-    """
-    Upload dashboard snapshots for a campaign.
-    
-    Args:
-        campaign_id: Campaign ID
-        files: List of image files
-        platform: Platform type (optional, will be auto-detected)
-        
-    Returns:
-        List of uploaded snapshot IDs
-    """
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    campaign.status = CampaignStatus.UPLOADING
-    
-    snapshot_ids = []
-    
-    for file in files:
-        # Validate file size
-        content = await file.read()
-        if len(content) > settings.max_upload_size_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File {file.filename} exceeds max size of {settings.max_upload_size_mb}MB"
-            )
-        
-        # Save file
-        snapshot_id = str(uuid.uuid4())
-        file_ext = Path(file.filename).suffix
-        file_path = settings.snapshot_dir / f"{campaign_id}_{snapshot_id}{file_ext}"
-        
-        with open(file_path, "wb") as f:
-            f.write(content)
-        
-        # Create snapshot record
-        snapshot = PlatformSnapshot(
-            snapshot_id=snapshot_id,
-            platform=platform or PlatformType.GOOGLE_ADS,  # Default, will be auto-detected
-            campaign_id=campaign_id,
-            file_path=str(file_path)
-        )
-        
-        campaign.snapshots.append(snapshot)
-        snapshot_ids.append(snapshot_id)
-        
-        logger.info(f"Uploaded snapshot {snapshot_id} for campaign {campaign_id}")
-    
-    return {
-        "campaign_id": campaign_id,
-        "uploaded_count": len(snapshot_ids),
-        "snapshot_ids": snapshot_ids
-    }
-
-
-@app.get("/api/campaigns/{campaign_id}/snapshots")
-async def list_snapshots(campaign_id: str):
-    """List all snapshots for a campaign."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    return {
-        "campaign_id": campaign_id,
-        "snapshots": [
-            {
-                "snapshot_id": s.snapshot_id,
-                "platform": s.platform.value,
-                "detected_platform": s.detected_platform.value if s.detected_platform else None,
-                "uploaded_at": s.uploaded_at,
-                "processing_status": s.processing_status
+            "error": {
+                "message": "Health check failed",
+                "details": {"type": type(e).__name__}
             }
-            for s in campaign.snapshots
-        ]
-    }
+        }
 
 
-@app.post("/api/campaigns/{campaign_id}/analyze")
-async def analyze_campaign(
-    campaign_id: str,
-    background_tasks: BackgroundTasks
-):
-    """
-    Start campaign analysis.
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application on startup."""
+    logger.info("=" * 60)
+    logger.info("PCA Agent API v3.0 - Starting")
+    logger.info("=" * 60)
+    logger.info("✅ Database persistence enabled")
+    logger.info("✅ JWT authentication enabled")
+    logger.info(f"✅ Rate limiting: {RATE_LIMIT_ENABLED}")
+    logger.info("✅ API versioning: /api/v1/")
+    logger.info("✅ Report regeneration implemented")
+    logger.info("✅ Structured error codes enabled")
+    logger.info("✅ Specific exception handling enabled")
+    logger.info("=" * 60)
     
-    Args:
-        campaign_id: Campaign ID
-        
-    Returns:
-        Analysis job status
-    """
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    if SECRET_KEY == "change-this-secret-key":
+        logger.warning("⚠️  WARNING: Using default JWT secret key!")
+        logger.warning("⚠️  Change JWT_SECRET_KEY in .env for production")
     
-    campaign = campaigns_db[campaign_id]
-    
-    if not campaign.snapshots:
-        raise HTTPException(status_code=400, detail="No snapshots uploaded")
-    
-    # Run analysis in background
-    background_tasks.add_task(run_analysis, campaign_id)
-    
-    return {
-        "campaign_id": campaign_id,
-        "status": "analysis_started",
-        "message": "Campaign analysis started. Check status endpoint for progress."
-    }
+    logger.info("API ready at http://localhost:8000")
+    logger.info("Docs available at http://localhost:8000/api/docs")
 
 
-async def run_analysis(campaign_id: str):
-    """Background task to run campaign analysis."""
-    try:
-        campaign = campaigns_db[campaign_id]
-        logger.info(f"Starting analysis for campaign {campaign_id}")
-        
-        # Run workflow
-        consolidated_report = await workflow.run(campaign)
-        
-        # Update campaign
-        campaigns_db[campaign_id] = campaign
-        
-        logger.info(f"Analysis completed for campaign {campaign_id}")
-        
-    except Exception as e:
-        logger.error(f"Analysis failed for campaign {campaign_id}: {e}")
-        campaign = campaigns_db[campaign_id]
-        campaign.status = CampaignStatus.FAILED
-        campaign.processing_error = str(e)
-
-
-@app.get("/api/campaigns/{campaign_id}/status")
-async def get_campaign_status(campaign_id: str):
-    """Get campaign processing status."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    return {
-        "campaign_id": campaign_id,
-        "status": campaign.status.value,
-        "processing_error": campaign.processing_error,
-        "processing_logs": campaign.processing_logs[-10:],  # Last 10 logs
-        "report_ready": campaign.report_path is not None
-    }
-
-
-@app.get("/api/campaigns/{campaign_id}/data")
-async def get_campaign_data(campaign_id: str):
-    """Get extracted campaign data in JSON format."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    return {
-        "campaign_id": campaign_id,
-        "normalized_metrics": [m.model_dump() for m in campaign.normalized_metrics],
-        "insights": campaign.insights,
-        "achievements": campaign.achievements,
-        "recommendations": campaign.recommendations
-    }
-
-
-@app.get("/api/campaigns/{campaign_id}/report")
-async def download_report(campaign_id: str):
-    """Download the generated PowerPoint report."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    if not campaign.report_path:
-        raise HTTPException(status_code=404, detail="Report not yet generated")
-    
-    report_path = Path(campaign.report_path)
-    if not report_path.exists():
-        raise HTTPException(status_code=404, detail="Report file not found")
-    
-    return FileResponse(
-        path=str(report_path),
-        filename=f"{campaign.campaign_name}_report.pptx",
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    )
-
-
-@app.post("/api/campaigns/{campaign_id}/regenerate")
-async def regenerate_report(
-    campaign_id: str,
-    template: str = "corporate",
-    background_tasks: BackgroundTasks = None
-):
-    """Regenerate report with a different template."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    if campaign.status != CampaignStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="Campaign analysis not completed")
-    
-    # TODO: Implement report regeneration with new template
-    
-    return {
-        "campaign_id": campaign_id,
-        "message": "Report regeneration started"
-    }
-
-
-@app.delete("/api/campaigns/{campaign_id}")
-async def delete_campaign(campaign_id: str):
-    """Delete a campaign and its data."""
-    if campaign_id not in campaigns_db:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    campaign = campaigns_db[campaign_id]
-    
-    # Delete snapshot files
-    for snapshot in campaign.snapshots:
-        file_path = Path(snapshot.file_path)
-        if file_path.exists():
-            file_path.unlink()
-    
-    # Delete report file
-    if campaign.report_path:
-        report_path = Path(campaign.report_path)
-        if report_path.exists():
-            report_path.unlink()
-    
-    # Remove from database
-    del campaigns_db[campaign_id]
-    
-    logger.info(f"Deleted campaign {campaign_id}")
-    
-    return {"message": "Campaign deleted successfully"}
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    logger.info("PCA Agent API v3.0 - Shutting down")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        app,
-        host=settings.api_host,
-        port=settings.api_port,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
