@@ -7,11 +7,20 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import pandas as pd
 
-# Try to import
+# Try to import directly (avoid workflow.py which needs langgraph)
 try:
-    from src.orchestration.query_orchestrator import QueryOrchestrator
+    import sys
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "query_orchestrator",
+        "src/orchestration/query_orchestrator.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules['query_orchestrator_test'] = module
+    spec.loader.exec_module(module)
+    QueryOrchestrator = module.QueryOrchestrator
     ORCHESTRATOR_AVAILABLE = True
-except ImportError:
+except Exception:
     ORCHESTRATOR_AVAILABLE = False
     QueryOrchestrator = None
 
