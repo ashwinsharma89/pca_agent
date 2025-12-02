@@ -2,7 +2,7 @@ name: CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/rag-executive-insights]
     tags: ['v*']
   workflow_dispatch:
     inputs:

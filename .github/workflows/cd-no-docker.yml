@@ -2,7 +2,7 @@ name: CD Pipeline (No Docker)
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/rag-executive-insights]
   workflow_dispatch:
     inputs:
       environment:
