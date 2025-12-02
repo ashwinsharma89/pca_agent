@@ -2,12 +2,18 @@
 
 An AI-powered system for automated campaign performance analysis across multiple advertising platforms using Vision Language Models (VLMs), Large Language Models (LLMs), and agentic reasoning.
 
+[![Tests](https://img.shields.io/badge/tests-856%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-35.3%25-yellow)](tests/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](requirements.txt)
+
 ## Features
 
 ### 🎯 Core Capabilities
 - **Multi-Platform Support**: Google Ads, CM360, DV360, Meta Ads, Snapchat Ads, LinkedIn Ads
 - **Vision-Based Extraction**: Extract metrics, graphs, and tables from dashboard screenshots
 - **Agentic Reasoning**: Cross-channel analysis, attribution modeling, achievement detection
+- **Natural Language Q&A**: Ask questions about your campaign data in plain English
+- **RAG-Powered Insights**: Knowledge base with industry benchmarks and best practices
 - **Automated Report Generation**: PowerPoint reports with data, visuals, and insights
 - **API-First Design**: RESTful API for programmatic access
 
@@ -15,8 +21,9 @@ An AI-powered system for automated campaign performance analysis across multiple
 1. **Vision Agent**: Extract data from dashboard screenshots using GPT-4V/Claude Sonnet 4
 2. **Data Extraction Agent**: Normalize and validate multi-platform data
 3. **Reasoning Agent**: Generate insights, detect achievements, provide recommendations
-4. **Visualization Agent**: Create charts, infographics, and comparison visuals
-5. **Report Assembly Agent**: Generate branded PowerPoint reports
+4. **Channel Specialists**: Platform-specific analysis (Search, Social, Programmatic)
+5. **Visualization Agent**: Create charts, infographics, and comparison visuals
+6. **Report Assembly Agent**: Generate branded PowerPoint reports
 
 ### 📊 Supported Platforms
 - **Google Ads**: Search, Display, Video campaigns
@@ -25,6 +32,13 @@ An AI-powered system for automated campaign performance analysis across multiple
 - **Meta Ads**: Facebook, Instagram campaigns
 - **Snapchat Ads**: Story ads, lens engagement
 - **LinkedIn Ads**: B2B lead generation
+
+### 🧠 LLM Support (Multi-Model)
+- **OpenAI**: GPT-4o, GPT-4-turbo
+- **Anthropic**: Claude 3.5 Sonnet
+- **Google**: Gemini 2.5 Flash (Free tier)
+- **DeepSeek**: DeepSeek Chat (Free, coding specialist)
+- **Groq**: Llama 3.1 (Free, fast inference)
 
 ## Architecture
 
@@ -275,8 +289,30 @@ PCA_Agent/
 
 ### Run Tests
 ```bash
-pytest tests/ -v
+# Run all unit tests
+pytest tests/unit/ -v
+
+# Run with coverage
+pytest tests/unit/ --cov=src --cov-report=html
+
+# Run specific test file
+pytest tests/unit/test_agents_vision.py -v
 ```
+
+### Test Coverage Summary (856 tests passing)
+
+| Module | Coverage | Status |
+|--------|----------|--------|
+| models | 94.9% | ✅ Excellent |
+| di | 92.1% | ✅ Excellent |
+| visualization | 78.9% | ✅ Good |
+| orchestration | 65.7% | ✅ Good |
+| streamlit_integration | 59.3% | 🟡 Moderate |
+| data_processing | 59.2% | 🟡 Moderate |
+| utils | 48.6% | 🟡 Moderate |
+| database | 48.6% | 🟡 Moderate |
+| query_engine | 43.6% | 🟡 Moderate |
+| knowledge | 32.0% | 🟡 Needs more |
 
 ### Code Quality
 ```bash
@@ -289,6 +325,15 @@ flake8 src/
 # Type checking
 mypy src/
 ```
+
+## Documentation
+
+See the `docs/` folder for detailed documentation:
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) - Production deployment
+- [Docker Setup](DOCKER_SETUP.md) - Container deployment
+- [Database Setup](DATABASE_SETUP.md) - PostgreSQL configuration
+- [Testing Guide](TESTING_GUIDE.md) - Test writing guidelines
+- [Knowledge Base Setup](KNOWLEDGE_BASE_SETUP.md) - RAG configuration
 
 ## License
 

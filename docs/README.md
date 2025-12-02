@@ -316,5 +316,5 @@ We're constantly improving our documentation based on user feedback. If you have
 
 **Happy Learning!** 📚🚀
 
-**Version**: 1.0.0  
-**Last Updated**: November 15, 2025
+**Version**: 1.1.0  
+**Last Updated**: December 2, 2025
