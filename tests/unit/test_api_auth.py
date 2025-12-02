@@ -126,38 +126,105 @@ class TestUserAuthentication:
     """Test user authentication logic."""
     
     def test_get_existing_user(self):
-        """Test getting existing user."""
-        user = get_user("admin")
+        """Test getting existing user with mocked database."""
+        import bcrypt
+        mock_user = Mock()
+        mock_user.username = "admin"
+        mock_user.email = "admin@test.com"
+        mock_user.hashed_password = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
+        mock_user.role = "admin"
+        mock_user.tier = "enterprise"
         
-        assert user is not None
-        assert user["username"] == "admin"
-        assert "hashed_password" in user
+        mock_session = Mock()
+        mock_service = Mock()
+        mock_service.get_user_by_username.return_value = mock_user
+        
+        with patch('src.database.connection.get_db_manager') as mock_db:
+            mock_db.return_value.get_session_direct.return_value = mock_session
+            
+            with patch('src.services.user_service.UserService', return_value=mock_service):
+                user = get_user("admin")
+                
+                assert user is not None
+                assert user["username"] == "admin"
+                assert "hashed_password" in user
     
     def test_get_nonexistent_user(self):
         """Test getting non-existent user."""
-        user = get_user("nonexistent_user")
+        mock_session = Mock()
+        mock_service = Mock()
+        mock_service.get_user_by_username.return_value = None
         
-        assert user is None
+        with patch('src.database.connection.get_db_manager') as mock_db:
+            mock_db.return_value.get_session_direct.return_value = mock_session
+            
+            with patch('src.services.user_service.UserService', return_value=mock_service):
+                user = get_user("nonexistent_user")
+                
+                assert user is None
     
     def test_authenticate_valid_credentials(self):
         """Test authentication with valid credentials."""
-        # Use the pre-configured test user
-        user = authenticate_user("admin", "admin123")
+        import bcrypt
+        hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
         
-        assert user is not None
-        assert user["username"] == "admin"
+        mock_user = Mock()
+        mock_user.username = "admin"
+        mock_user.email = "admin@test.com"
+        mock_user.hashed_password = hashed
+        mock_user.role = "admin"
+        mock_user.tier = "enterprise"
+        
+        mock_session = Mock()
+        mock_service = Mock()
+        mock_service.get_user_by_username.return_value = mock_user
+        
+        with patch('src.database.connection.get_db_manager') as mock_db:
+            mock_db.return_value.get_session_direct.return_value = mock_session
+            
+            with patch('src.services.user_service.UserService', return_value=mock_service):
+                user = authenticate_user("admin", "admin123")
+                
+                assert user is not None
+                assert user["username"] == "admin"
     
     def test_authenticate_invalid_password(self):
         """Test authentication with invalid password."""
-        user = authenticate_user("admin", "wrong_password")
+        import bcrypt
+        hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
         
-        assert user is None
+        mock_user = Mock()
+        mock_user.username = "admin"
+        mock_user.email = "admin@test.com"
+        mock_user.hashed_password = hashed
+        mock_user.role = "admin"
+        mock_user.tier = "enterprise"
+        
+        mock_session = Mock()
+        mock_service = Mock()
+        mock_service.get_user_by_username.return_value = mock_user
+        
+        with patch('src.database.connection.get_db_manager') as mock_db:
+            mock_db.return_value.get_session_direct.return_value = mock_session
+            
+            with patch('src.services.user_service.UserService', return_value=mock_service):
+                user = authenticate_user("admin", "wrong_password")
+                
+                assert user is None
     
     def test_authenticate_nonexistent_user(self):
         """Test authentication with non-existent user."""
-        user = authenticate_user("nonexistent", "password")
+        mock_session = Mock()
+        mock_service = Mock()
+        mock_service.get_user_by_username.return_value = None
         
-        assert user is None
+        with patch('src.database.connection.get_db_manager') as mock_db:
+            mock_db.return_value.get_session_direct.return_value = mock_session
+            
+            with patch('src.services.user_service.UserService', return_value=mock_service):
+                user = authenticate_user("nonexistent", "password")
+                
+                assert user is None
 
 
 @pytest.mark.unit
