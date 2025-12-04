@@ -675,6 +675,35 @@ SQL Query:"""
         # Convert results to text summary
         results_text = results.to_string(index=False, max_rows=20)
         
+        # Extract date context from the data if available
+        date_context = ""
+        if self.schema_info:
+            # Check for date columns in results
+            date_cols = [col for col in results.columns if any(kw in col.lower() for kw in ['date', 'week', 'month', 'year', 'period'])]
+            if date_cols:
+                for col in date_cols:
+                    try:
+                        dates = pd.to_datetime(results[col], errors='coerce').dropna()
+                        if not dates.empty:
+                            min_date = dates.min()
+                            max_date = dates.max()
+                            date_context = f"\n\nDate Range in Results: {min_date.strftime('%B %Y')} to {max_date.strftime('%B %Y')}"
+                            break
+                    except:
+                        pass
+            
+            # If no date in results, check original data for context
+            if not date_context and hasattr(self, 'conn') and self.conn:
+                try:
+                    # Get date range from original data
+                    date_check = self.conn.execute("SELECT MIN(Date) as min_date, MAX(Date) as max_date FROM campaigns").fetchdf()
+                    if not date_check.empty:
+                        min_d = pd.to_datetime(date_check['min_date'].iloc[0])
+                        max_d = pd.to_datetime(date_check['max_date'].iloc[0])
+                        date_context = f"\n\nData covers: {min_d.strftime('%B %d, %Y')} to {max_d.strftime('%B %d, %Y')}"
+                except:
+                    pass
+        
         # Determine if this is an insight or recommendation question
         is_insight_question = any(keyword in question.lower() for keyword in [
             'why', 'what explains', 'root cause', 'underlying', 'story', 'pattern', 
@@ -709,9 +738,12 @@ Format your recommendation as:
             user_prompt = f"""Based on the data below, provide a strategic recommendation.
 
 Question: {question}
+{date_context}
 
 Data:
 {results_text}
+
+IMPORTANT: If the question mentions a time period, explicitly state the specific dates/months/years in your response.
 
 Provide a structured, actionable recommendation:"""
             max_tokens = 500
@@ -733,22 +765,28 @@ Provide insights that tell a story and reveal the underlying drivers of performa
             user_prompt = f"""Based on the data below, provide strategic insights that explain the underlying story.
 
 Question: {question}
+{date_context}
 
 Data:
 {results_text}
+
+IMPORTANT: If the question mentions a time period (like "last month", "this week", etc.), explicitly state the specific dates/months/years the data covers in your response.
 
 Provide deep insights with context and business implications:"""
             max_tokens = 400
             
         else:
             # Standard analytical answer
-            system_prompt = "You are a data analyst providing clear, insightful answers with business context."
+            system_prompt = "You are a data analyst providing clear, insightful answers with business context. Always include specific date ranges when discussing time-based queries."
             user_prompt = f"""Based on the following query results, provide a clear answer with context.
 
 Question: {question}
+{date_context}
 
 Query Results:
 {results_text}
+
+IMPORTANT: If the question mentions a time period (like "last month", "this week", "performance of last month", etc.), you MUST explicitly state the specific month and year (e.g., "November 2024") in your response. Never give a response about time periods without specifying the actual dates.
 
 Provide an informative answer with key takeaways:"""
             max_tokens = 300

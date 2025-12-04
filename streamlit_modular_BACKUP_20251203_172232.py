@@ -48,7 +48,6 @@ from src.models.campaign import CampaignContext, BusinessModel, TargetAudienceLe
 from src.knowledge.benchmark_engine import DynamicBenchmarkEngine
 from src.agents.enhanced_reasoning_agent import EnhancedReasoningAgent
 from src.agents.enhanced_visualization_agent import EnhancedVisualizationAgent
-from src.ui.diagnostics_component import DiagnosticsComponent
 from src.agents.visualization_filters import SmartFilterEngine
 from src.streamlit_integration import get_streamlit_db_manager
 from src.agents.filter_presets import FilterPresets
@@ -385,7 +384,7 @@ def render_sidebar():
         
         page = st.radio(
             "Select Page",
-            options=["Home", "Data Upload", "Analysis", "In-Depth Analysis", "Diagnostics", "Visualizations", "Q&A", "Settings"],
+            options=["Home", "Data Upload", "Analysis", "In-Depth Analysis", "Visualizations", "Q&A", "Settings"],
             key="nav_radio"
         )
         
@@ -782,24 +781,15 @@ def display_rag_analysis_results(results: Dict[str, Any]):
         # Get overall KPIs if available
         overall_kpis = metrics.get('overall_kpis', {})
         if overall_kpis:
-            def format_metric_value(value, prefix='', suffix=''):
-                """Format metric values with M/K suffixes."""
-                if value >= 1_000_000:
-                    return f"{prefix}{value/1_000_000:.2f}M{suffix}"
-                elif value >= 1_000:
-                    return f"{prefix}{value/1_000:.1f}K{suffix}"
-                else:
-                    return f"{prefix}{value:,.0f}{suffix}"
-            
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 total_spend = overall_kpis.get('Total_Spend', metrics.get('total_spend', 0))
-                st.metric("Total Spend", format_metric_value(total_spend, '$'))
+                st.metric("Total Spend", f"${total_spend:,.2f}")
             
             with col2:
                 total_conversions = overall_kpis.get('Total_Conversions', metrics.get('total_conversions', 0))
-                st.metric("Total Conversions", format_metric_value(total_conversions))
+                st.metric("Total Conversions", f"{total_conversions:,.0f}")
             
             with col3:
                 overall_ctr = overall_kpis.get('Overall_CTR', metrics.get('avg_ctr', 0))
@@ -814,11 +804,11 @@ def display_rag_analysis_results(results: Dict[str, Any]):
             
             with col1:
                 total_clicks = overall_kpis.get('Total_Clicks', metrics.get('total_clicks', 0))
-                st.metric("Total Clicks", format_metric_value(total_clicks))
+                st.metric("Total Clicks", f"{total_clicks:,.0f}")
             
             with col2:
                 total_impressions = overall_kpis.get('Total_Impressions', metrics.get('total_impressions', 0))
-                st.metric("Total Impressions", format_metric_value(total_impressions))
+                st.metric("Total Impressions", f"{total_impressions:,.0f}")
             
             with col3:
                 overall_cpc = overall_kpis.get('Overall_CPC', metrics.get('avg_cpc', 0))
@@ -1075,7 +1065,7 @@ def render_qa_page():
 
 
 def render_deep_dive_page():
-    """Render in-depth analysis page with smart filters and custom chart builders."""
+    """Render in-depth analysis page with smart filters."""
     st.markdown('<div class="main-header">🔍 In-Depth Analysis</div>', unsafe_allow_html=True)
     
     if st.session_state.df is None:
@@ -1084,330 +1074,7 @@ def render_deep_dive_page():
     
     df = st.session_state.df
     
-    # ========================================
-    # SECTION 1: CUSTOM CHART BUILDER (MOVED TO TOP, ALWAYS OPEN)
-    # ========================================
-    st.markdown("### 🎨 Custom Chart Builder")
-    st.markdown("*Build custom visualizations with your data*")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    with col1:
-        custom_chart_type = st.selectbox(
-            "Chart Type",
-            ["Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Pie Chart", "Heatmap", "Box Plot"],
-            key="custom_chart_type"
-        )
-    
-    with col2:
-        if custom_chart_type in ["Bar Chart", "Line Chart", "Area Chart"]:
-            x_axis = st.selectbox("X-Axis", categorical_cols + (['Date'] if 'Date' in df.columns else []), key="custom_x")
-        elif custom_chart_type == "Scatter Plot":
-            x_axis = st.selectbox("X-Axis (Numeric)", numeric_cols, key="custom_x")
-        elif custom_chart_type == "Pie Chart":
-            x_axis = st.selectbox("Category", categorical_cols, key="custom_x")
-        else:
-            x_axis = st.selectbox("X-Axis", categorical_cols, key="custom_x")
-    
-    with col3:
-        y_axis = st.selectbox("Y-Axis (Metric)", numeric_cols, key="custom_y")
-    
-    # Additional options
-    col1, col2 = st.columns(2)
-    with col1:
-        color_by = st.selectbox("Color By (Optional)", ["None"] + categorical_cols, key="custom_color")
-    with col2:
-        aggregation = st.selectbox("Aggregation", ["Sum", "Mean", "Count", "Max", "Min"], key="custom_agg")
-    
-    if st.button("📊 Generate Custom Chart", key="generate_custom"):
-        try:
-            # Prepare data based on aggregation
-            agg_map = {"Sum": "sum", "Mean": "mean", "Count": "count", "Max": "max", "Min": "min"}
-            
-            if custom_chart_type == "Bar Chart":
-                chart_data = df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
-                if color_by != "None":
-                    chart_data = df.groupby([x_axis, color_by])[y_axis].agg(agg_map[aggregation]).reset_index()
-                    fig = px.bar(chart_data, x=x_axis, y=y_axis, color=color_by, title=f"{y_axis} by {x_axis}")
-                else:
-                    fig = px.bar(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} by {x_axis}")
-            
-            elif custom_chart_type == "Line Chart":
-                chart_data = df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
-                fig = px.line(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} Trend")
-            
-            elif custom_chart_type == "Scatter Plot":
-                fig = px.scatter(df, x=x_axis, y=y_axis, 
-                                color=color_by if color_by != "None" else None,
-                                title=f"{y_axis} vs {x_axis}")
-            
-            elif custom_chart_type == "Area Chart":
-                chart_data = df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
-                fig = px.area(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} Area")
-            
-            elif custom_chart_type == "Pie Chart":
-                chart_data = df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
-                fig = px.pie(chart_data, values=y_axis, names=x_axis, title=f"{y_axis} Distribution")
-            
-            elif custom_chart_type == "Box Plot":
-                fig = px.box(df, x=x_axis, y=y_axis, 
-                            color=color_by if color_by != "None" else None,
-                            title=f"{y_axis} Distribution by {x_axis}")
-            
-            elif custom_chart_type == "Heatmap":
-                pivot_data = df.pivot_table(values=y_axis, index=x_axis, 
-                                            columns=color_by if color_by != "None" else None,
-                                            aggfunc=agg_map[aggregation])
-                fig = px.imshow(pivot_data, title=f"{y_axis} Heatmap", aspect="auto")
-            
-            fig.update_layout(
-                template='plotly_dark',
-                height=500,
-                margin=dict(l=80, r=40, t=60, b=60),
-                xaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.3)',
-                    showline=True,
-                    linewidth=2,
-                    linecolor='rgba(255,255,255,0.3)',
-                    tickfont=dict(size=12)
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.3)',
-                    showline=True,
-                    linewidth=2,
-                    linecolor='rgba(255,255,255,0.3)',
-                    tickfont=dict(size=12),
-                    showticklabels=True
-                )
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-        except Exception as e:
-            st.error(f"Error creating chart: {str(e)[:200]}")
-    
-    st.divider()
-    
-    # ========================================
-    # SECTION 2: CUSTOM CHART BUILDER-2 (NEW - KPIs ON X-AXIS)
-    # ========================================
-    st.markdown("### 🎨 Custom Chart Builder-2")
-    st.markdown("*Compare multiple KPIs side-by-side*")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Select multiple KPIs for X-axis
-        kpi_options = [col for col in numeric_cols if col in ['Spend', 'Clicks', 'Conversions', 'Impressions', 'Revenue', 'CPA', 'CPC', 'CTR', 'ROAS']]
-        selected_kpis = st.multiselect(
-            "Select KPIs to Compare",
-            kpi_options,
-            default=kpi_options[:3] if len(kpi_options) >= 3 else kpi_options,
-            key="kpi_multiselect"
-        )
-    
-    with col2:
-        # Select dimension for grouping
-        dimension_options = ['Platform']
-        if 'Campaign_Name' in df.columns:
-            dimension_options.append('Campaign')
-        if 'Placement' in df.columns:
-            dimension_options.append('Placement')
-        if 'Audience' in df.columns or 'Audience_Segment' in df.columns:
-            dimension_options.append('Audience')
-        
-        compare_dimension = st.selectbox("Group By", dimension_options, key="compare_dimension")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        chart_type_2 = st.selectbox("Chart Type", ["Grouped Bar", "Line", "Radar"], key="chart_type_2")
-    with col2:
-        normalize_data = st.checkbox("Normalize Data (0-100 scale)", value=False, key="normalize_kpi")
-    
-    if st.button("📊 Generate KPI Comparison", key="generate_kpi_comparison"):
-        if selected_kpis and compare_dimension:
-            try:
-                # Map dimension to actual column
-                dim_map = {
-                    'Platform': 'Platform',
-                    'Campaign': 'Campaign_Name',
-                    'Placement': 'Placement',
-                    'Audience': 'Audience' if 'Audience' in df.columns else 'Audience_Segment'
-                }
-                actual_dim = dim_map.get(compare_dimension, 'Platform')
-                
-                if actual_dim in df.columns:
-                    # Aggregate data
-                    agg_data = df.groupby(actual_dim)[selected_kpis].sum().reset_index()
-                    
-                    # Helper function to format axis based on value range
-                    def get_axis_format(values):
-                        """Determine appropriate axis format based on value range."""
-                        max_val = values.max()
-                        min_val = values.min()
-                        range_val = max_val - min_val
-                        
-                        if max_val >= 1_000_000:
-                            return {'suffix': 'M', 'divisor': 1_000_000, 'decimals': 2}
-                        elif max_val >= 1_000:
-                            return {'suffix': 'K', 'divisor': 1_000, 'decimals': 1}
-                        elif max_val >= 100:
-                            return {'suffix': '', 'divisor': 1, 'decimals': 0}
-                        elif max_val >= 1:
-                            return {'suffix': '', 'divisor': 1, 'decimals': 1}
-                        else:
-                            return {'suffix': '', 'divisor': 1, 'decimals': 2}
-                    
-                    # Normalize if requested
-                    if normalize_data:
-                        for kpi in selected_kpis:
-                            max_val = agg_data[kpi].max()
-                            if max_val > 0:
-                                agg_data[f"{kpi}_norm"] = (agg_data[kpi] / max_val) * 100
-                        kpi_cols = [f"{kpi}_norm" for kpi in selected_kpis]
-                        y_axis_format = {'suffix': '%', 'divisor': 1, 'decimals': 1}
-                    else:
-                        kpi_cols = selected_kpis
-                        # Determine format based on all selected KPIs
-                        all_values = pd.concat([agg_data[kpi] for kpi in selected_kpis])
-                        y_axis_format = get_axis_format(all_values)
-                    
-                    # Melt data for plotting
-                    melted_data = agg_data.melt(
-                        id_vars=[actual_dim],
-                        value_vars=kpi_cols,
-                        var_name='KPI',
-                        value_name='Value'
-                    )
-                    
-                    # Create custom hover template with proper formatting
-                    if normalize_data:
-                        hover_template = '<b>%{x}</b><br>%{fullData.name}<br>Value: %{y:.1f}%<extra></extra>'
-                    else:
-                        divisor = y_axis_format['divisor']
-                        suffix = y_axis_format['suffix']
-                        decimals = y_axis_format['decimals']
-                        hover_template = f'<b>%{{x}}</b><br>%{{fullData.name}}<br>Value: %{{y:,.{decimals}f}}{suffix}<extra></extra>'
-                    
-                    if chart_type_2 == "Grouped Bar":
-                        fig = px.bar(
-                            melted_data,
-                            x='KPI',
-                            y='Value',
-                            color=actual_dim,
-                            barmode='group',
-                            title=f"KPI Comparison by {compare_dimension}"
-                        )
-                        fig.update_traces(hovertemplate=hover_template)
-                        
-                    elif chart_type_2 == "Line":
-                        fig = px.line(
-                            melted_data,
-                            x='KPI',
-                            y='Value',
-                            color=actual_dim,
-                            markers=True,
-                            title=f"KPI Comparison by {compare_dimension}"
-                        )
-                        fig.update_traces(hovertemplate=hover_template)
-                        
-                    elif chart_type_2 == "Radar":
-                        fig = go.Figure()
-                        for dim_val in agg_data[actual_dim].unique():
-                            dim_data = melted_data[melted_data[actual_dim] == dim_val]
-                            fig.add_trace(go.Scatterpolar(
-                                r=dim_data['Value'].tolist(),
-                                theta=dim_data['KPI'].tolist(),
-                                fill='toself',
-                                name=str(dim_val)
-                            ))
-                        fig.update_layout(
-                            polar=dict(radialaxis=dict(visible=True)),
-                            title=f"KPI Radar: {compare_dimension}"
-                        )
-                    
-                    # Apply adaptive Y-axis formatting with custom tick text
-                    if chart_type_2 in ["Grouped Bar", "Line"]:
-                        if normalize_data:
-                            y_title = "Normalized Value (%)"
-                        else:
-                            divisor = y_axis_format['divisor']
-                            suffix = y_axis_format['suffix']
-                            y_title = f"Value ({suffix})" if suffix else "Value"
-                        
-                        fig.update_layout(
-                            yaxis=dict(
-                                title=dict(text=y_title, font=dict(size=14)),
-                                showgrid=True,
-                                gridcolor='rgba(128,128,128,0.3)',
-                                showticklabels=True,
-                                tickmode='linear',
-                                tick0=0,
-                                dtick='auto',
-                                tickfont=dict(size=12),
-                                showline=True,
-                                linewidth=2,
-                                linecolor='rgba(255,255,255,0.3)'
-                            ),
-                            xaxis=dict(
-                                title=dict(text="KPI", font=dict(size=14)),
-                                showgrid=True,
-                                gridcolor='rgba(128,128,128,0.3)',
-                                tickfont=dict(size=12),
-                                showline=True,
-                                linewidth=2,
-                                linecolor='rgba(255,255,255,0.3)'
-                            )
-                        )
-                    
-                    fig.update_layout(
-                        template='plotly_dark',
-                        height=500,
-                        showlegend=True,
-                        margin=dict(l=80, r=40, t=60, b=60)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Show summary statistics
-                    st.markdown("**Summary Statistics:**")
-                    summary_data = agg_data[selected_kpis].describe().T
-                    summary_data['total'] = agg_data[selected_kpis].sum()
-                    
-                    # Format based on scale
-                    formatted_summary = summary_data.copy()
-                    for kpi in selected_kpis:
-                        kpi_format = get_axis_format(agg_data[kpi])
-                        divisor = kpi_format['divisor']
-                        suffix = kpi_format['suffix']
-                        decimals = kpi_format['decimals']
-                        
-                        for col in formatted_summary.columns:
-                            if col in formatted_summary.index:
-                                continue
-                            val = formatted_summary.loc[kpi, col]
-                            if divisor > 1:
-                                formatted_summary.loc[kpi, col] = f"{val/divisor:,.{decimals}f}{suffix}"
-                            else:
-                                formatted_summary.loc[kpi, col] = f"{val:,.{decimals}f}"
-                    
-                    st.dataframe(formatted_summary, use_container_width=True)
-                    
-                else:
-                    st.warning(f"Column {actual_dim} not found in data")
-            except Exception as e:
-                st.error(f"Error creating KPI comparison: {str(e)[:200]}")
-        else:
-            st.warning("Please select at least one KPI and a dimension")
-    
-    st.divider()
-    
-    # ========================================
-    # SECTION 3: SMART FILTERS (MOVED DOWN)
-    # ========================================
+    # Smart Filters Section
     st.markdown("### 🎯 Smart Filters")
     
     # Initialize filter engine if needed
@@ -1428,6 +1095,7 @@ def render_deep_dive_page():
         # Date range filter
         if 'Date' in df.columns:
             try:
+                # Try multiple date formats
                 min_date = pd.to_datetime(df['Date'], format='mixed', dayfirst=True).min()
                 max_date = pd.to_datetime(df['Date'], format='mixed', dayfirst=True).max()
                 date_range = st.date_input(
@@ -1532,6 +1200,7 @@ def render_deep_dive_page():
     if date_range and 'Date' in df.columns:
         if len(date_range) == 2:
             try:
+                # Parse dates with dayfirst=True for DD-MM-YYYY format
                 filtered_df['Date_parsed'] = pd.to_datetime(filtered_df['Date'], format='mixed', dayfirst=True)
                 filtered_df = filtered_df[
                     (filtered_df['Date_parsed'] >= pd.to_datetime(date_range[0])) &
@@ -1555,12 +1224,10 @@ def render_deep_dive_page():
     
     st.divider()
     
-    # ========================================
-    # SECTION 4: FILTERED RESULTS & ANALYSIS
-    # ========================================
+    # Display filtered results
     st.markdown(f"### 📊 Filtered Results ({len(filtered_df)} rows)")
     
-    # Key metrics
+    # Key metrics for filtered data with K/M formatting
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -1585,8 +1252,9 @@ def render_deep_dive_page():
     
     st.divider()
     
-    # Dual-Axis Visualizations
+    # Dual-Axis Visualizations for filtered data
     if selected_metric and selected_metric in filtered_df.columns:
+        # Determine chart title based on metrics
         if secondary_metric:
             chart_title = f"{selected_metric}-{secondary_metric} Analysis"
         else:
@@ -1594,7 +1262,7 @@ def render_deep_dive_page():
         
         st.markdown(f"### 📈 {chart_title}")
         
-        # Map group_by to actual column
+        # Map group_by selection to actual column name
         group_col_map = {
             'Platform': 'Platform',
             'Campaign': 'Campaign_Name',
@@ -1609,7 +1277,7 @@ def render_deep_dive_page():
         
         actual_group_col = group_col_map.get(group_by, 'Platform')
         
-        # Create dual-axis chart
+        # Create dual-axis chart if secondary metric is available
         if secondary_metric and secondary_metric in filtered_df.columns and actual_group_col in filtered_df.columns:
             try:
                 fig = create_dual_axis_chart(
@@ -1622,6 +1290,7 @@ def render_deep_dive_page():
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.warning(f"Could not create dual-axis chart: {e}")
+                # Fallback to simple chart
                 if actual_group_col in filtered_df.columns:
                     chart_data = filtered_df.groupby(actual_group_col)[selected_metric].sum().reset_index()
                     st.bar_chart(chart_data.set_index(actual_group_col))
@@ -1639,60 +1308,23 @@ def render_deep_dive_page():
                 fig.update_layout(template='plotly_dark')
                 st.plotly_chart(fig, use_container_width=True)
         
-        # ========================================
-        # TIME SERIES - WEEKLY LINE CHART (IMPROVED)
-        # ========================================
+        # Time series dual-axis if date available
         if 'Date' in filtered_df.columns and secondary_metric:
-            st.markdown("#### 📅 Weekly Time Series Analysis")
+            st.markdown("#### 📅 Time Series Analysis")
             try:
-                # Parse dates
                 filtered_df['Date_parsed'] = pd.to_datetime(filtered_df['Date'], format='mixed', dayfirst=True)
-                
-                # Aggregate by week
-                weekly_data = filtered_df.set_index('Date_parsed').resample('W')[
-                    [selected_metric, secondary_metric]
-                ].sum().reset_index()
-                
-                # Create line chart with dual axis
-                fig = go.Figure()
-                
-                # Primary metric (left axis)
-                fig.add_trace(go.Scatter(
-                    x=weekly_data['Date_parsed'],
-                    y=weekly_data[selected_metric],
-                    name=selected_metric,
-                    mode='lines+markers',
-                    line=dict(color='#667eea', width=3),
-                    marker=dict(size=8)
-                ))
-                
-                # Secondary metric (right axis)
-                fig.add_trace(go.Scatter(
-                    x=weekly_data['Date_parsed'],
-                    y=weekly_data[secondary_metric],
-                    name=secondary_metric,
-                    mode='lines+markers',
-                    line=dict(color='#f093fb', width=3),
-                    marker=dict(size=8),
-                    yaxis='y2'
-                ))
-                
-                # Update layout with dual axes
-                fig.update_layout(
-                    title=f"Weekly Trend: {selected_metric} vs {secondary_metric}",
-                    xaxis=dict(title='Week'),
-                    yaxis=dict(title=selected_metric, side='left'),
-                    yaxis2=dict(title=secondary_metric, side='right', overlaying='y'),
-                    template='plotly_dark',
-                    hovermode='x unified',
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+                time_fig = create_dual_axis_chart(
+                    filtered_df,
+                    x_col='Date_parsed',
+                    primary_metric=selected_metric,
+                    secondary_metric=secondary_metric,
+                    title=f"{selected_metric} vs {secondary_metric} Over Time"
                 )
-                
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(time_fig, use_container_width=True)
             except Exception as e:
-                st.warning(f"Could not create weekly time series: {e}")
+                st.warning(f"Could not create time series chart: {e}")
         
-        # Marketing Funnel
+        # Marketing Funnel Analysis
         if selected_analysis == "Marketing Funnel":
             st.markdown("#### 🔄 Marketing Funnel")
             funnel_metrics = ['Impressions', 'Clicks', 'Conversions']
@@ -1713,142 +1345,93 @@ def render_deep_dive_page():
                 fig.update_layout(title="Marketing Funnel", template='plotly_dark')
                 st.plotly_chart(fig, use_container_width=True)
     
-    # ========================================
-    # SECTION 5: SPEND-CLICK ANALYSIS BY MULTIPLE DIMENSIONS (NEW)
-    # ========================================
-    st.divider()
-    st.markdown("### 💰 Spend-Click Analysis by Dimension")
-    
-    # Detect available dimensions
-    dimension_map = {}
-    
-    # Platform (always available)
-    if 'Platform' in filtered_df.columns:
-        dimension_map['Platform'] = 'Platform'
-    
-    # Funnel Stage
-    funnel_cols = ['Funnel_Stage', 'Stage', 'Funnel', 'Marketing_Funnel']
-    for col in funnel_cols:
-        if col in filtered_df.columns:
-            dimension_map['Funnel Stage'] = col
-            break
-    
-    # Source/Channel
-    source_cols = ['Source', 'Channel', 'Traffic_Source', 'Medium', 'utm_source', 'utm_medium']
-    for col in source_cols:
-        if col in filtered_df.columns:
-            dimension_map['Source/Channel'] = col
-            break
-    
-    # Audience Type
-    audience_cols = ['Audience', 'Audience_Type', 'Audience_Segment', 'Segment', 'Target_Audience']
-    for col in audience_cols:
-        if col in filtered_df.columns:
-            dimension_map['Audience Type'] = col
-            break
-    
-    # Demographics
-    demo_cols = ['Age', 'Age_Group', 'Age_Range', 'Gender', 'Location', 'Geography', 'Geo', 'Country', 'Region']
-    for col in demo_cols:
-        if col in filtered_df.columns:
-            dimension_map['Demographics'] = col
-            break
-    
-    # Campaign Type
-    campaign_type_cols = ['Campaign_Type', 'CampaignType', 'Type', 'Objective', 'Campaign_Objective']
-    for col in campaign_type_cols:
-        if col in filtered_df.columns:
-            dimension_map['Campaign Type'] = col
-            break
-    
-    if dimension_map:
-        selected_dimension = st.selectbox(
-            "Select Dimension for Analysis",
-            list(dimension_map.keys()),
-            key="spend_click_dimension"
-        )
-        
-        if selected_dimension and 'Spend' in filtered_df.columns and 'Clicks' in filtered_df.columns:
-            actual_col = dimension_map[selected_dimension]
-            
-            try:
-                # Aggregate by dimension
-                analysis_data = filtered_df.groupby(actual_col).agg({
-                    'Spend': 'sum',
-                    'Clicks': 'sum'
-                }).reset_index()
-                
-                # Create scatter plot
-                fig = px.scatter(
-                    analysis_data,
-                    x='Spend',
-                    y='Clicks',
-                    text=actual_col,
-                    title=f"Spend vs Clicks by {selected_dimension}",
-                    size='Clicks',
-                    color=actual_col,
-                    hover_data={actual_col: True, 'Spend': ':,.0f', 'Clicks': ':,.0f'}
-                )
-                
-                fig.update_traces(textposition='top center', textfont_size=10)
-                fig.update_layout(
-                    template='plotly_dark',
-                    xaxis=dict(
-                        title=dict(text="Total Spend ($)", font=dict(size=14)),
-                        showgrid=True,
-                        gridcolor='rgba(128,128,128,0.3)',
-                        showticklabels=True,
-                        tickformat='$,.0f',
-                        tickmode='linear',
-                        tick0=0,
-                        dtick='auto',
-                        tickfont=dict(size=12),
-                        showline=True,
-                        linewidth=2,
-                        linecolor='rgba(255,255,255,0.3)'
-                    ),
-                    yaxis=dict(
-                        title=dict(text="Total Clicks", font=dict(size=14)),
-                        showgrid=True,
-                        gridcolor='rgba(128,128,128,0.3)',
-                        showticklabels=True,
-                        tickformat=',',
-                        tickmode='linear',
-                        tick0=0,
-                        dtick='auto',
-                        tickfont=dict(size=12),
-                        showline=True,
-                        linewidth=2,
-                        linecolor='rgba(255,255,255,0.3)'
-                    ),
-                    showlegend=True,
-                    height=500,
-                    margin=dict(l=80, r=40, t=60, b=60)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Show data table
-                st.markdown(f"**{selected_dimension} Performance:**")
-                analysis_data['CPC'] = analysis_data['Spend'] / analysis_data['Clicks']
-                analysis_data = analysis_data.sort_values('Spend', ascending=False)
-                st.dataframe(
-                    analysis_data.style.format({
-                        'Spend': '${:,.2f}',
-                        'Clicks': '{:,.0f}',
-                        'CPC': '${:.2f}'
-                    }),
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Error creating spend-click analysis: {str(e)[:200]}")
-    else:
-        st.info("No additional dimensions found for spend-click analysis. Available: Platform only.")
-    
     # Data table
-    st.divider()
     with st.expander("📋 View Filtered Data"):
         st.dataframe(filtered_df, use_container_width=True, height=400)
+    
+    # Custom Chart Builder
+    st.divider()
+    st.markdown("### 🎨 Custom Chart Builder")
+    
+    with st.expander("Build Custom Chart", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        
+        numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
+        
+        with col1:
+            custom_chart_type = st.selectbox(
+                "Chart Type",
+                ["Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Pie Chart", "Heatmap", "Box Plot"],
+                key="custom_chart_type"
+            )
+        
+        with col2:
+            if custom_chart_type in ["Bar Chart", "Line Chart", "Area Chart"]:
+                x_axis = st.selectbox("X-Axis", categorical_cols + ['Date'] if 'Date' in filtered_df.columns else categorical_cols, key="custom_x")
+            elif custom_chart_type == "Scatter Plot":
+                x_axis = st.selectbox("X-Axis (Numeric)", numeric_cols, key="custom_x")
+            elif custom_chart_type == "Pie Chart":
+                x_axis = st.selectbox("Category", categorical_cols, key="custom_x")
+            else:
+                x_axis = st.selectbox("X-Axis", categorical_cols, key="custom_x")
+        
+        with col3:
+            y_axis = st.selectbox("Y-Axis (Metric)", numeric_cols, key="custom_y")
+        
+        # Additional options
+        col1, col2 = st.columns(2)
+        with col1:
+            color_by = st.selectbox("Color By (Optional)", ["None"] + categorical_cols, key="custom_color")
+        with col2:
+            aggregation = st.selectbox("Aggregation", ["Sum", "Mean", "Count", "Max", "Min"], key="custom_agg")
+        
+        if st.button("📊 Generate Custom Chart", key="generate_custom"):
+            try:
+                # Prepare data based on aggregation
+                agg_map = {"Sum": "sum", "Mean": "mean", "Count": "count", "Max": "max", "Min": "min"}
+                
+                if custom_chart_type == "Bar Chart":
+                    chart_data = filtered_df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
+                    if color_by != "None":
+                        chart_data = filtered_df.groupby([x_axis, color_by])[y_axis].agg(agg_map[aggregation]).reset_index()
+                        fig = px.bar(chart_data, x=x_axis, y=y_axis, color=color_by, title=f"{y_axis} by {x_axis}")
+                    else:
+                        fig = px.bar(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} by {x_axis}")
+                
+                elif custom_chart_type == "Line Chart":
+                    chart_data = filtered_df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
+                    fig = px.line(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} Trend")
+                
+                elif custom_chart_type == "Scatter Plot":
+                    fig = px.scatter(filtered_df, x=x_axis, y=y_axis, 
+                                    color=color_by if color_by != "None" else None,
+                                    title=f"{y_axis} vs {x_axis}")
+                
+                elif custom_chart_type == "Area Chart":
+                    chart_data = filtered_df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
+                    fig = px.area(chart_data, x=x_axis, y=y_axis, title=f"{y_axis} Area")
+                
+                elif custom_chart_type == "Pie Chart":
+                    chart_data = filtered_df.groupby(x_axis)[y_axis].agg(agg_map[aggregation]).reset_index()
+                    fig = px.pie(chart_data, values=y_axis, names=x_axis, title=f"{y_axis} Distribution")
+                
+                elif custom_chart_type == "Box Plot":
+                    fig = px.box(filtered_df, x=x_axis, y=y_axis, 
+                                color=color_by if color_by != "None" else None,
+                                title=f"{y_axis} Distribution by {x_axis}")
+                
+                elif custom_chart_type == "Heatmap":
+                    pivot_data = filtered_df.pivot_table(values=y_axis, index=x_axis, 
+                                                        columns=color_by if color_by != "None" else None,
+                                                        aggfunc=agg_map[aggregation])
+                    fig = px.imshow(pivot_data, title=f"{y_axis} Heatmap", aspect="auto")
+                
+                fig.update_layout(template='plotly_dark')
+                st.plotly_chart(fig, use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Error creating chart: {str(e)[:200]}")
     
     # Export options
     col1, col2 = st.columns(2)
@@ -1861,21 +1444,6 @@ def render_deep_dive_page():
                 file_name="filtered_data.csv",
                 mime="text/csv"
             )
-
-
-def render_diagnostics_page():
-    """Render Smart Performance Diagnostics page."""
-    st.markdown('<div class="main-header">🔬 Smart Performance Diagnostics</div>', unsafe_allow_html=True)
-    
-    if st.session_state.df is None:
-        st.warning("⚠️ Please upload data first")
-        return
-    
-    df = st.session_state.df
-    
-    # Render diagnostics component
-    DiagnosticsComponent.render(df)
-
 
 def render_visualizations_page():
     """Render interactive visualizations page."""
@@ -1904,7 +1472,7 @@ def render_visualizations_page():
     
     st.divider()
     
-    # Smart Filters - Enhanced with more options
+    # Smart Filters - placed just above charts
     with st.expander("🎯 Smart Filters", expanded=True):
         col1, col2, col3 = st.columns(3)
         
@@ -1939,64 +1507,6 @@ def render_visualizations_page():
                     viz_date_range = None
             else:
                 viz_date_range = None
-        
-        # Additional filter row
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            # Audience filter
-            if 'Audience' in df.columns or 'Audience_Segment' in df.columns:
-                audience_col = 'Audience' if 'Audience' in df.columns else 'Audience_Segment'
-                audiences = ['All'] + sorted(df[audience_col].dropna().unique().tolist())[:15]
-                viz_audience = st.selectbox("👥 Audience", audiences, key="viz_audience")
-            else:
-                viz_audience = 'All'
-        
-        with col2:
-            # Device filter
-            if 'Device' in df.columns:
-                devices = ['All'] + sorted(df['Device'].dropna().unique().tolist())
-                viz_device = st.selectbox("📱 Device", devices, key="viz_device")
-            else:
-                viz_device = 'All'
-        
-        with col3:
-            # Placement filter
-            if 'Placement' in df.columns:
-                placements = ['All'] + sorted(df['Placement'].dropna().unique().tolist())[:15]
-                viz_placement = st.selectbox("📍 Placement", placements, key="viz_placement")
-            else:
-                viz_placement = 'All'
-        
-        # Metric range filters
-        col1, col2 = st.columns(2)
-        with col1:
-            if 'Spend' in df.columns:
-                min_spend = float(df['Spend'].min())
-                max_spend = float(df['Spend'].max())
-                viz_spend_range = st.slider(
-                    "💰 Spend Range",
-                    min_value=min_spend,
-                    max_value=max_spend,
-                    value=(min_spend, max_spend),
-                    key="viz_spend_range"
-                )
-            else:
-                viz_spend_range = None
-        
-        with col2:
-            if 'Clicks' in df.columns:
-                min_clicks = float(df['Clicks'].min())
-                max_clicks = float(df['Clicks'].max())
-                viz_clicks_range = st.slider(
-                    "🖱️ Clicks Range",
-                    min_value=min_clicks,
-                    max_value=max_clicks,
-                    value=(min_clicks, max_clicks),
-                    key="viz_clicks_range"
-                )
-            else:
-                viz_clicks_range = None
     
     # Apply filters
     filtered_df = df.copy()
@@ -2014,30 +1524,6 @@ def render_visualizations_page():
             filtered_df = filtered_df.drop('_date_parsed', axis=1)
         except Exception:
             pass
-    
-    # Apply additional filters
-    if viz_audience != 'All':
-        audience_col = 'Audience' if 'Audience' in df.columns else 'Audience_Segment'
-        if audience_col in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df[audience_col] == viz_audience]
-    
-    if viz_device != 'All' and 'Device' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['Device'] == viz_device]
-    
-    if viz_placement != 'All' and 'Placement' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['Placement'] == viz_placement]
-    
-    if viz_spend_range and 'Spend' in filtered_df.columns:
-        filtered_df = filtered_df[
-            (filtered_df['Spend'] >= viz_spend_range[0]) &
-            (filtered_df['Spend'] <= viz_spend_range[1])
-        ]
-    
-    if viz_clicks_range and 'Clicks' in filtered_df.columns:
-        filtered_df = filtered_df[
-            (filtered_df['Clicks'] >= viz_clicks_range[0]) &
-            (filtered_df['Clicks'] <= viz_clicks_range[1])
-        ]
     
     st.caption(f"📊 Showing {len(filtered_df):,} of {len(df):,} records")
     
@@ -2057,21 +1543,11 @@ def render_visualizations_page():
             ('Impressions', '', '.0f')
         ]
         
-        def format_metric_value(value, prefix=''):
-            """Format metric values with M/K suffixes."""
-            if value >= 1_000_000:
-                return f"{prefix}{value/1_000_000:.2f}M"
-            elif value >= 1_000:
-                return f"{prefix}{value/1_000:.1f}K"
-            else:
-                return f"{prefix}{value:,.0f}"
-        
         for i, (metric, prefix, fmt) in enumerate(metrics_to_show):
             if metric in df.columns:
                 with [col1, col2, col3, col4][i]:
                     value = df[metric].sum()
-                    formatted_value = format_metric_value(value, prefix)
-                    st.metric(f"Total {metric}", formatted_value)
+                    st.metric(f"Total {metric}", f"{prefix}{value:{fmt}}")
         
         # Multi-metric chart
         if all(m in df.columns for m in ['Spend', 'Clicks', 'Conversions']):
@@ -2086,28 +1562,6 @@ def render_visualizations_page():
                 y='Value',
                 title='Key Metrics Summary',
                 color='Metric'
-            )
-            fig.update_layout(
-                template='plotly_dark',
-                height=500,
-                margin=dict(l=80, r=40, t=60, b=60),
-                xaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.3)',
-                    showline=True,
-                    linewidth=2,
-                    linecolor='rgba(255,255,255,0.3)',
-                    tickfont=dict(size=12)
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(128,128,128,0.3)',
-                    showline=True,
-                    linewidth=2,
-                    linecolor='rgba(255,255,255,0.3)',
-                    tickfont=dict(size=12),
-                    showticklabels=True
-                )
             )
             st.plotly_chart(fig, use_container_width=True)
     
@@ -2385,152 +1839,7 @@ def render_visualizations_page():
                 elif chart_type == "Histogram":
                     fig = px.histogram(df, x=y_axis, title=f"{y_axis} Distribution")
                 
-                fig.update_layout(
-                    template='plotly_dark',
-                    height=500,
-                    margin=dict(l=80, r=40, t=60, b=60),
-                    xaxis=dict(
-                        showgrid=True,
-                        gridcolor='rgba(128,128,128,0.3)',
-                        showline=True,
-                        linewidth=2,
-                        linecolor='rgba(255,255,255,0.3)',
-                        tickfont=dict(size=12)
-                    ),
-                    yaxis=dict(
-                        showgrid=True,
-                        gridcolor='rgba(128,128,128,0.3)',
-                        showline=True,
-                        linewidth=2,
-                        linecolor='rgba(255,255,255,0.3)',
-                        tickfont=dict(size=12),
-                        showticklabels=True
-                    )
-                )
                 st.plotly_chart(fig, use_container_width=True)
-    
-    # ========================================
-    # ADDITIONAL CUSTOM CHART BUILDER (NEW)
-    # ========================================
-    st.divider()
-    st.markdown("### 🎨 Advanced Custom Chart Builder")
-    st.markdown("*Create sophisticated visualizations with full control*")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    with col1:
-        adv_chart_type = st.selectbox(
-            "Chart Type",
-            ["Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Pie Chart", "Heatmap", "Box Plot", "Violin Plot"],
-            key="adv_chart_type"
-        )
-    
-    with col2:
-        if adv_chart_type in ["Bar Chart", "Line Chart", "Area Chart", "Pie Chart"]:
-            adv_x_axis = st.selectbox("X-Axis", categorical_cols + (['Date'] if 'Date' in df.columns else []), key="adv_x")
-        elif adv_chart_type == "Scatter Plot":
-            adv_x_axis = st.selectbox("X-Axis (Numeric)", numeric_cols, key="adv_x")
-        else:
-            adv_x_axis = st.selectbox("X-Axis", categorical_cols, key="adv_x")
-    
-    with col3:
-        if adv_chart_type != "Pie Chart":
-            adv_y_axis = st.selectbox("Y-Axis (Metric)", numeric_cols, key="adv_y")
-        else:
-            adv_y_axis = st.selectbox("Value (Metric)", numeric_cols, key="adv_y")
-    
-    # Additional options
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        adv_color_by = st.selectbox("Color By (Optional)", ["None"] + categorical_cols, key="adv_color")
-    with col2:
-        adv_aggregation = st.selectbox("Aggregation", ["Sum", "Mean", "Count", "Max", "Min", "Median"], key="adv_agg")
-    with col3:
-        adv_show_values = st.checkbox("Show Values on Chart", value=False, key="adv_show_values")
-    
-    if st.button("📊 Generate Advanced Chart", key="generate_adv"):
-        try:
-            # Prepare data based on aggregation
-            agg_map = {"Sum": "sum", "Mean": "mean", "Count": "count", "Max": "max", "Min": "min", "Median": "median"}
-            
-            if adv_chart_type == "Bar Chart":
-                chart_data = df.groupby(adv_x_axis)[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                if adv_color_by != "None":
-                    chart_data = df.groupby([adv_x_axis, adv_color_by])[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                    fig = px.bar(chart_data, x=adv_x_axis, y=adv_y_axis, color=adv_color_by, 
-                                title=f"{adv_y_axis} by {adv_x_axis}", text=adv_y_axis if adv_show_values else None)
-                else:
-                    fig = px.bar(chart_data, x=adv_x_axis, y=adv_y_axis, 
-                                title=f"{adv_y_axis} by {adv_x_axis}", text=adv_y_axis if adv_show_values else None)
-            
-            elif adv_chart_type == "Line Chart":
-                chart_data = df.groupby(adv_x_axis)[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                if adv_color_by != "None":
-                    chart_data = df.groupby([adv_x_axis, adv_color_by])[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                    fig = px.line(chart_data, x=adv_x_axis, y=adv_y_axis, color=adv_color_by, 
-                                 markers=True, title=f"{adv_y_axis} Trend")
-                else:
-                    fig = px.line(chart_data, x=adv_x_axis, y=adv_y_axis, markers=True, title=f"{adv_y_axis} Trend")
-            
-            elif adv_chart_type == "Scatter Plot":
-                fig = px.scatter(df, x=adv_x_axis, y=adv_y_axis, 
-                                color=adv_color_by if adv_color_by != "None" else None,
-                                size=adv_y_axis if adv_show_values else None,
-                                title=f"{adv_y_axis} vs {adv_x_axis}")
-            
-            elif adv_chart_type == "Area Chart":
-                chart_data = df.groupby(adv_x_axis)[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                fig = px.area(chart_data, x=adv_x_axis, y=adv_y_axis, title=f"{adv_y_axis} Area")
-            
-            elif adv_chart_type == "Pie Chart":
-                chart_data = df.groupby(adv_x_axis)[adv_y_axis].agg(agg_map[adv_aggregation]).reset_index()
-                fig = px.pie(chart_data, values=adv_y_axis, names=adv_x_axis, 
-                            title=f"{adv_y_axis} Distribution",
-                            hole=0.3 if adv_show_values else 0)
-            
-            elif adv_chart_type == "Box Plot":
-                fig = px.box(df, x=adv_x_axis, y=adv_y_axis, 
-                            color=adv_color_by if adv_color_by != "None" else None,
-                            title=f"{adv_y_axis} Distribution by {adv_x_axis}")
-            
-            elif adv_chart_type == "Violin Plot":
-                fig = px.violin(df, x=adv_x_axis, y=adv_y_axis, 
-                               color=adv_color_by if adv_color_by != "None" else None,
-                               box=True, title=f"{adv_y_axis} Distribution by {adv_x_axis}")
-            
-            elif adv_chart_type == "Heatmap":
-                if adv_color_by != "None":
-                    pivot_data = df.pivot_table(values=adv_y_axis, index=adv_x_axis, 
-                                                columns=adv_color_by,
-                                                aggfunc=agg_map[adv_aggregation])
-                    fig = px.imshow(pivot_data, title=f"{adv_y_axis} Heatmap", aspect="auto",
-                                   labels=dict(x=adv_color_by, y=adv_x_axis, color=adv_y_axis))
-                else:
-                    st.warning("Please select a 'Color By' dimension for heatmap")
-                    fig = None
-            
-            if fig:
-                fig.update_layout(
-                    template='plotly_dark',
-                    height=500,
-                    showlegend=True,
-                    xaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)'),
-                    yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)')
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Show summary statistics
-                if adv_chart_type not in ["Pie Chart", "Heatmap"]:
-                    st.markdown("**Summary Statistics:**")
-                    summary = df.groupby(adv_x_axis)[adv_y_axis].agg(['count', 'sum', 'mean', 'min', 'max']).reset_index()
-                    summary.columns = [adv_x_axis, 'Count', 'Total', 'Average', 'Min', 'Max']
-                    st.dataframe(summary, use_container_width=True)
-                
-        except Exception as e:
-            st.error(f"Error creating chart: {str(e)[:200]}")
 
 def render_settings_page():
     """Render settings page."""
@@ -2658,8 +1967,6 @@ def main():
         render_analysis_page()
     elif page == "in-depth analysis":
         render_deep_dive_page()
-    elif page == "diagnostics":
-        render_diagnostics_page()
     elif page == "visualizations":
         render_visualizations_page()
     elif page == "q&a":

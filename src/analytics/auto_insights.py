@@ -1237,6 +1237,13 @@ Focus on recommendations that can be implemented immediately with clear tactical
         
         platform_metrics = metrics.get('by_platform', {})
         campaign_metrics = metrics.get('by_campaign', {})
+        
+        # CRITICAL: Filter out platforms with 0 spend to prevent hallucination
+        platform_metrics = {
+            name: data for name, data in platform_metrics.items()
+            if isinstance(data, dict) and data.get('Spend', 0) > 0
+        }
+        logger.info(f"Filtered platforms: {list(platform_metrics.keys())} (removed platforms with 0 spend)")
 
         def _get_best_metric(metric_key: str, source: Dict[str, Dict[str, Any]], prefer_max: bool = True):
             best_name = None
@@ -1371,7 +1378,15 @@ FORMATTING RULES:
 2. ALWAYS space after numbers (39.05 CPA not 39.05CPA)
 3. Write "percent" for %, "K" or "M" with space
 4. NO asterisks, NO underscores, NO bold, NO italics, NO emojis, NO brackets
-5. Plain text only"""
+5. Plain text only
+
+CRITICAL - ANTI-HALLUCINATION RULES:
+- ONLY analyze platforms and campaigns that appear in the data above
+- If a platform has 0 spend or is not in the data, DO NOT mention it
+- DO NOT invent problems or issues that are not supported by the actual numbers
+- DO NOT reference "DIS" or "SOC" or any platform unless it appears in the data with non-zero metrics
+- ONLY use the exact numbers provided in the data - do not estimate or calculate new numbers
+- If you don't have data for a section, write "Data not available for this analysis" instead of making up information"""
 
         # OPTIMIZED: Single LLM call for both brief and detailed summaries
         brief_summary = None
@@ -1450,6 +1465,19 @@ Then "DETAILED:" then the detailed summary."""
             brief_summary = self._strip_italics(brief_summary.strip())
         if detailed_summary:
             detailed_summary = self._strip_italics(detailed_summary.strip())
+        
+        # Apply post-processing formatting (M/K notation, remove sources, fix spacing)
+        from ..utils.summary_formatter import format_summary
+        brief_summary, detailed_summary = format_summary(brief_summary or "", detailed_summary or "")
+        
+        # Enforce 9-section structure deterministically
+        from ..utils.structure_enforcer import enforce_structure
+        if detailed_summary:
+            logger.info(f"BEFORE structure enforcement: {len(detailed_summary)} chars")
+            logger.info(f"Preview: {detailed_summary[:200]}")
+            detailed_summary = enforce_structure(detailed_summary)
+            logger.info(f"AFTER structure enforcement: {len(detailed_summary)} chars")
+            logger.info(f"Preview: {detailed_summary[:200]}")
         
         # If either piece is missing, fill JUST the missing parts with a deterministic fallback.
         # Do NOT discard a valid LLM-generated detailed summary based on similarity heuristics.
@@ -2199,7 +2227,15 @@ Platform Performance (Multi-KPI View):
             
             # Initialize retrievers
             vector_retriever = VectorRetriever(config=config)
-            hybrid_retriever = HybridRetriever(config=config, use_keyword=True, use_rerank=False)
+            # Enable ALL RAG features for maximum quality
+            hybrid_retriever = HybridRetriever(
+                config=config,
+                use_keyword=True,
+                use_rerank=True,  # ENABLED: Cohere reranking for better relevance
+                vector_weight=0.6,  # Balanced: slightly favor semantic over keyword
+                keyword_weight=0.4,  # Increased: better for specific terms like "B2B CTR benchmark"
+                rrf_k=60.0
+            )
             
             # Create a simple RAG engine wrapper
             class SimpleRAGEngine:
@@ -2293,7 +2329,7 @@ Bidding Optimization:
         
         return mock_benchmarks
     
-    def _retrieve_rag_context(self, metrics: Dict, top_k: int = 5) -> List[Dict[str, Any]]:
+    def _retrieve_rag_context(self, metrics: Dict, top_k: int = 10) -> List[Dict[str, Any]]:
         """Retrieve relevant knowledge from RAG system with semantic caching.
         
         Uses smart query bundling and semantic caching to reduce redundant queries.
@@ -2340,8 +2376,8 @@ Bidding Optimization:
             cache_misses += 1
             logger.debug(f"Cache MISS for query: {query[:50]}...")
             
-            # Query RAG engine
-            chunks = self._execute_rag_query(query, top_k=top_k)
+            # Query RAG engine with metadata filtering
+            chunks = self._execute_rag_query(query, top_k=top_k, use_filters=True)
             
             # Cache the results
             if chunks:
@@ -2379,19 +2415,37 @@ Bidding Optimization:
         
         return issues
     
-    def _execute_rag_query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Execute a single RAG query."""
+    def _execute_rag_query(self, query: str, top_k: int = 5, use_filters: bool = False) -> List[Dict[str, Any]]:
+        """Execute a single RAG query with optional metadata filtering."""
         rag_engine = self._initialize_rag_engine()
         if rag_engine is None:
             # Return mock data if no RAG engine
             return self._get_mock_benchmark_data_for_query(query)
         
         try:
-            # Retrieve relevant knowledge using hybrid retriever (vector + keyword)
+            # Build metadata filters for high-priority content
+            metadata_filters = None
+            if use_filters:
+                # Prioritize high-priority benchmarks and best practices
+                metadata_filters = {
+                    'priority': ['high', 'critical']  # Only get high-value content
+                }
+            
+            # Retrieve relevant knowledge using hybrid retriever (vector + keyword + rerank)
             if hasattr(rag_engine, 'hybrid_retriever') and rag_engine.hybrid_retriever:
-                results = rag_engine.hybrid_retriever.search(query, top_k=top_k)
+                results = rag_engine.hybrid_retriever.search(
+                    query, 
+                    top_k=top_k,
+                    metadata_filters=metadata_filters
+                )
+                logger.debug(f"Hybrid retriever returned {len(results)} results for: {query[:50]}...")
             elif hasattr(rag_engine, 'vector_retriever') and rag_engine.vector_retriever:
-                results = rag_engine.vector_retriever.search(query, top_k=top_k)
+                results = rag_engine.vector_retriever.search(
+                    query, 
+                    top_k=top_k,
+                    metadata_filters=metadata_filters
+                )
+                logger.debug(f"Vector retriever returned {len(results)} results for: {query[:50]}...")
             else:
                 logger.warning("No retriever available in RAG engine")
                 return []
@@ -2448,10 +2502,13 @@ Bidding Optimization:
                                    metrics: Dict, 
                                    insights: List, 
                                    recommendations: List,
-                                   rag_context: List[Dict[str, Any]]) -> str:
+                                   rag_context: List[Dict[str, Any]],
+                                   campaign_context: Dict[str, Any] = None) -> str:
         """Build comprehensive RAG-augmented prompt for deep, actionable analysis.
         
         This prompt generates detailed insights with:
+        - Campaign context awareness (goals, constraints, priorities)
+        - Chain-of-thought reasoning
         - Root cause analysis (5 Whys methodology)
         - Quantified business impact
         - Evidence-based recommendations
@@ -2463,10 +2520,34 @@ Bidding Optimization:
             insights: Generated insights
             recommendations: Generated recommendations
             rag_context: Retrieved knowledge chunks
+            campaign_context: Campaign goals, constraints, and priorities
             
         Returns:
             RAG-augmented prompt string
         """
+        # Build campaign context section (NEW)
+        context_section = ""
+        if campaign_context:
+            context_section = "\n\n=== CAMPAIGN CONTEXT ===\n\n"
+            context_section += f"Stage: {campaign_context['stage']['stage'].title()} - {campaign_context['stage']['description']}\n\n"
+            
+            if campaign_context['goals']:
+                context_section += "Primary Goals:\n"
+                for goal in campaign_context['goals'][:3]:
+                    context_section += f"- {goal['description']}\n"
+                context_section += "\n"
+            
+            if campaign_context['priorities']:
+                context_section += "Top Priorities:\n"
+                for priority in campaign_context['priorities'][:3]:
+                    context_section += f"{priority['priority']}. {priority['description']} (Urgency: {priority['urgency']})\n"
+                context_section += "\n"
+            
+            constraints = campaign_context.get('constraints', {})
+            if constraints.get('protected_channels'):
+                protected = [ch['platform'] for ch in constraints['protected_channels']]
+                context_section += f"Protected Channels: {', '.join(protected)} (cannot be paused)\n\n"
+        
         # Build knowledge context section
         knowledge_section = ""
         if rag_context:
@@ -2485,14 +2566,43 @@ Bidding Optimization:
         # Build the comprehensive prompt
         prompt = f"""You are an expert marketing analyst conducting a comprehensive campaign analysis. Your role is to provide DEEP, ACTIONABLE insights - not surface-level observations.
 
+=== CHAIN-OF-THOUGHT REASONING FRAMEWORK ===
+
+Use this structured thinking process for EVERY insight:
+
+STEP 1 - UNDERSTAND THE SITUATION:
+- What is the current state? (specific metrics with numbers)
+- What is the expected/benchmark state?
+- What is the gap? (quantified)
+
+STEP 2 - IDENTIFY ROOT CAUSES:
+- What immediate factors explain this gap?
+- What underlying issues drive those factors?
+- Apply 5 Whys to reach the root cause
+
+STEP 3 - VALIDATE WITH EVIDENCE:
+- What data supports this hypothesis?
+- What industry knowledge confirms this?
+- Are there any contradicting signals?
+
+STEP 4 - FORMULATE RECOMMENDATIONS:
+- What specific actions address the root cause?
+- What is the expected impact? (quantified)
+- What is the confidence level? (high/medium/low with reasoning)
+- What are the implementation steps?
+
 === ANALYSIS PHILOSOPHY ===
 
 1. QUANTIFY EVERYTHING: Never say "improved" - say "improved by 23 percent from 1.2 to 1.48"
-2. EXPLAIN CAUSATION: Don't just state correlations - explain WHY something is happening
+2. EXPLAIN CAUSATION: Don't just state correlations - explain WHY something is happening using the Chain-of-Thought framework
 3. ROOT CAUSE ANALYSIS: Apply "5 Whys" methodology to dig beyond symptoms
-4. SPECIFIC ACTIONS: "Optimize targeting" is useless - "Expand audience from 50 K to 200 K by removing company size filter" is actionable
+4. SPECIFIC ACTIONS: "Optimize targeting" is useless - "Expand audience from 50K to 200K by removing company size filter" is actionable
 5. CALCULATE IMPACT: Translate percentages to business outcomes (leads, revenue, cost savings)
-6. ONLY USE AVAILABLE DATA: Never reference metrics that are not in the data. If conversions or ROAS are missing, focus on available metrics like CTR, CPC, impressions, clicks, spend.
+6. SHOW YOUR REASONING: For each insight, briefly show your thinking process
+7. STATE CONFIDENCE: Always indicate confidence level (high/medium/low) with reasoning
+8. ONLY USE AVAILABLE DATA: Never reference metrics that are not in the data. If conversions or ROAS are missing, focus on available metrics like CTR, CPC, impressions, clicks, spend.
+
+{context_section}
 
 {knowledge_section}
 
@@ -2636,6 +2746,19 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
         platform_metrics = metrics.get('by_platform', {})
         campaign_metrics = metrics.get('by_campaign', {})
         
+        logger.info(f"RAG: BEFORE filtering - platforms: {list(platform_metrics.keys())}")
+        for name, data in platform_metrics.items():
+            if isinstance(data, dict):
+                spend = data.get('Spend', data.get('spend', 0))
+                logger.info(f"  {name}: spend={spend}")
+        
+        # CRITICAL: Filter out platforms with 0 spend to prevent hallucination
+        platform_metrics = {
+            name: data for name, data in platform_metrics.items()
+            if isinstance(data, dict) and data.get('Spend', data.get('spend', 0)) > 0
+        }
+        logger.info(f"RAG: AFTER filtering - platforms: {list(platform_metrics.keys())} (removed platforms with 0 spend)")
+        
         # Identify available metrics to prevent hallucination
         available_metrics = []
         if overview:
@@ -2664,24 +2787,28 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
             for platform, m in platform_metrics.items():
                 platform_data = {
                     'name': platform,
-                    'spend': m.get('spend', 0),
-                    'impressions': m.get('impressions', 0),
-                    'clicks': m.get('clicks', 0),
-                    'ctr': m.get('ctr', 0),
-                    'cpc': m.get('cpc', 0),
+                    'spend': m.get('Spend', m.get('spend', 0)),  # Try uppercase first, then lowercase
+                    'impressions': m.get('Impressions', m.get('impressions', 0)),
+                    'clicks': m.get('Clicks', m.get('clicks', 0)),
+                    'ctr': m.get('CTR', m.get('ctr', 0)),
+                    'cpc': m.get('CPC', m.get('cpc', 0)),
                 }
                 # Only include conversion metrics if available
-                if m.get('conversions', 0) > 0:
-                    platform_data['conversions'] = m.get('conversions', 0)
-                    platform_data['cpa'] = m.get('cpa', 0)
-                if m.get('roas', 0) > 0:
-                    platform_data['roas'] = m.get('roas', 0)
-                if m.get('revenue', 0) > 0:
-                    platform_data['revenue'] = m.get('revenue', 0)
+                conversions = m.get('Conversions', m.get('conversions', 0))
+                if conversions > 0:
+                    platform_data['conversions'] = conversions
+                    platform_data['cpa'] = m.get('CPA', m.get('cpa', 0))
+                roas = m.get('ROAS', m.get('roas', 0))
+                if roas > 0:
+                    platform_data['roas'] = roas
+                revenue = m.get('Revenue', m.get('revenue', 0))
+                if revenue > 0:
+                    platform_data['revenue'] = revenue
                 
                 # Calculate spend share
                 total_spend = overview.get('total_spend', 1)
-                platform_data['spend_share_percent'] = round((m.get('spend', 0) / total_spend) * 100, 1) if total_spend > 0 else 0
+                platform_spend = m.get('Spend', m.get('spend', 0))
+                platform_data['spend_share_percent'] = round((platform_spend / total_spend) * 100, 1) if total_spend > 0 else 0
                 
                 platform_analysis.append(platform_data)
             
@@ -2745,6 +2872,11 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
                 'date_range': metrics.get('date_range', 'Not specified')
             }
         }
+        
+        # Log what platforms are in the final data sent to LLM
+        logger.info(f"RAG: Final platform_analysis has {len(platform_analysis)} platforms:")
+        for p in platform_analysis:
+            logger.info(f"  - {p.get('name')}: spend={p.get('spend', 0)}")
         
         return summary_data
     
@@ -2829,18 +2961,26 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
         logger.info("=" * 60)
         
         try:
-            # Step 1: Retrieve relevant knowledge from RAG
-            logger.info("Step 1: Retrieving RAG context...")
+            # Step 1: Analyze campaign context (NEW - Intelligence Enhancement)
+            logger.info("Step 1: Analyzing campaign context...")
+            from ..utils.campaign_context import CampaignContextAnalyzer
+            context_analyzer = CampaignContextAnalyzer()
+            campaign_context = context_analyzer.analyze_context(metrics)
+            logger.info(f"Campaign context: {campaign_context['summary']}")
+            logger.info(f"Goals: {len(campaign_context['goals'])}, Priorities: {len(campaign_context['priorities'])}")
+            
+            # Step 2: Retrieve relevant knowledge from RAG
+            logger.info("Step 2: Retrieving RAG context...")
             rag_context = self._retrieve_rag_context(metrics, top_k=5)
             logger.info(f"RAG context retrieved: {len(rag_context)} chunks")
             if rag_context:
                 for i, chunk in enumerate(rag_context[:2]):
                     logger.info(f"  Chunk {i+1}: {chunk.get('source', 'unknown')} (score: {chunk.get('score', 0):.2f})")
             
-            # Step 2: Build RAG-augmented prompt
-            logger.info("Step 2: Building RAG-augmented prompt...")
+            # Step 3: Build RAG-augmented prompt with context
+            logger.info("Step 3: Building RAG-augmented prompt with campaign context...")
             rag_prompt = self._build_rag_augmented_prompt(
-                metrics, insights, recommendations, rag_context
+                metrics, insights, recommendations, rag_context, campaign_context
             )
             logger.info(f"RAG prompt length: {len(rag_prompt)} chars")
             logger.info(f"RAG prompt preview: {rag_prompt[:500]}...")
@@ -2930,6 +3070,18 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
             brief_summary = self._strip_italics(brief_summary)
             detailed_summary = self._strip_italics(detailed_summary)
             
+            # Apply post-processing formatter (M/K notation, bold headers, remove sources)
+            from ..utils.summary_formatter import format_summary
+            brief_summary, detailed_summary = format_summary(brief_summary, detailed_summary)
+            logger.info(f"Post-processing complete - Brief: {len(brief_summary)} chars, Detailed: {len(detailed_summary)} chars")
+            
+            # Step 5: Extract and score recommendations (NEW - Intelligence Enhancement)
+            logger.info("Step 5: Scoring recommendations with confidence levels...")
+            recommendations_with_confidence = self._score_recommendations(
+                detailed_summary, metrics, campaign_context, rag_context
+            )
+            logger.info(f"Scored {len(recommendations_with_confidence)} recommendations")
+            
             latency = time.time() - start_time
             
             logger.info(f"=== RAG SUMMARY COMPLETE in {latency:.2f}s ===")
@@ -2937,6 +3089,8 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
             return {
                 'brief': brief_summary,
                 'detailed': detailed_summary,
+                'recommendations_scored': recommendations_with_confidence,  # NEW
+                'campaign_context': campaign_context,  # NEW
                 'rag_metadata': {
                     'knowledge_sources': [chunk.get('source') for chunk in rag_context],
                     'retrieval_count': len(rag_context),
@@ -2969,3 +3123,84 @@ Generate the complete BRIEF and DETAILED RAG-enhanced analysis now:"""
                     'error': str(e)
                 }
             }
+    
+    def _score_recommendations(
+        self,
+        detailed_summary: str,
+        metrics: Dict[str, Any],
+        campaign_context: Dict[str, Any],
+        rag_context: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract and score recommendations from detailed summary.
+        
+        Returns:
+            List of recommendations with confidence scores and validation
+        """
+        from ..utils.confidence_scorer import ConfidenceScorer, assess_data_quality
+        from ..utils.recommendation_validator import RecommendationValidator
+        
+        # Extract recommendations from Priority Actions section
+        recommendations = []
+        
+        # Look for Priority Actions section
+        import re
+        priority_match = re.search(
+            r'\*\*Priority Actions?:\*\*\s*(.*?)(?:\*\*|$)',
+            detailed_summary,
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        if priority_match:
+            priority_text = priority_match.group(1)
+            # Extract numbered items
+            rec_items = re.findall(r'\d+\.\s*([^\n]+(?:\n(?!\d+\.)[^\n]+)*)', priority_text)
+            recommendations.extend(rec_items)
+        
+        # Also look for recommendations in other sections
+        rec_keywords = ['recommend', 'should', 'suggest', 'action:', 'next step']
+        for line in detailed_summary.split('\n'):
+            if any(kw in line.lower() for kw in rec_keywords):
+                if line.strip() and not line.strip().startswith('**'):
+                    recommendations.append(line.strip())
+        
+        # Remove duplicates
+        recommendations = list(dict.fromkeys(recommendations))[:10]  # Top 10
+        
+        # Score each recommendation
+        scorer = ConfidenceScorer()
+        validator = RecommendationValidator()
+        data_quality = assess_data_quality(metrics)
+        
+        scored_recommendations = []
+        for rec in recommendations:
+            if len(rec) < 20:  # Skip very short items
+                continue
+            
+            # Calculate confidence score
+            confidence = scorer.score_recommendation(
+                rec, metrics, rag_context, data_quality
+            )
+            
+            # Validate recommendation
+            validation = validator.validate_recommendation(
+                rec, metrics, campaign_context, rag_context
+            )
+            
+            scored_recommendations.append({
+                'recommendation': rec,
+                'confidence': confidence,
+                'validation': validation,
+                'display_badge': self._get_confidence_badge(confidence['confidence_level'])
+            })
+        
+        return scored_recommendations
+    
+    def _get_confidence_badge(self, level: str) -> str:
+        """Get emoji badge for confidence level."""
+        badges = {
+            'HIGH': '🟢',
+            'MEDIUM': '🟡',
+            'LOW': '🔴'
+        }
+        return badges.get(level, '⚪')
