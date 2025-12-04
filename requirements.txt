@@ -90,6 +90,7 @@ python-dotenv
 loguru
 tenacity
 tqdm
+wrapt>=1.16.0  # Needed for Python 3.13 compatibility (inspect API changes)
 
 # Validation - NO VERSION PINS
 jsonschema
@@ -98,16 +99,6 @@ pyyaml
 # Monitoring
 prometheus-client
 sentry-sdk
-
-# OpenTelemetry (Distributed Tracing)
-opentelemetry-api>=1.20.0
-opentelemetry-sdk>=1.20.0
-opentelemetry-instrumentation-fastapi>=0.41b0
-opentelemetry-instrumentation-sqlalchemy>=0.41b0
-opentelemetry-instrumentation-redis>=0.41b0
-opentelemetry-instrumentation-requests>=0.41b0
-opentelemetry-exporter-jaeger>=1.20.0
-opentelemetry-exporter-otlp>=1.20.0
 
 # Testing
 pytest==7.4.0

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 import io
+import pickle
+import hashlib
 
 import streamlit as st
 import pandas as pd
@@ -26,6 +28,10 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 load_dotenv()
+
+# Cache directory for persisting uploaded files
+CACHE_DIR = Path(current_dir) / ".reporting_cache"
+CACHE_DIR.mkdir(exist_ok=True)
 
 # Page config
 st.set_page_config(
@@ -62,8 +68,45 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def save_to_cache(key: str, data: Any, filename: str = None):
+    """Save data to persistent cache."""
+    try:
+        cache_data = {
+            'data': data,
+            'filename': filename,
+            'timestamp': datetime.now().isoformat()
+        }
+        cache_path = CACHE_DIR / f"{key}.pkl"
+        with open(cache_path, 'wb') as f:
+            pickle.dump(cache_data, f)
+    except Exception as e:
+        print(f"Cache save error: {e}")
+
+
+def load_from_cache(key: str) -> Tuple[Any, Optional[str]]:
+    """Load data from persistent cache. Returns (data, filename) or (None, None)."""
+    try:
+        cache_path = CACHE_DIR / f"{key}.pkl"
+        if cache_path.exists():
+            with open(cache_path, 'rb') as f:
+                cache_data = pickle.load(f)
+                return cache_data.get('data'), cache_data.get('filename')
+    except Exception as e:
+        print(f"Cache load error: {e}")
+    return None, None
+
+
+def clear_cache():
+    """Clear all cached files."""
+    try:
+        for cache_file in CACHE_DIR.glob("*.pkl"):
+            cache_file.unlink()
+    except Exception as e:
+        print(f"Cache clear error: {e}")
+
+
 def init_session_state():
-    """Initialize session state variables."""
+    """Initialize session state variables, loading from cache if available."""
     defaults = {
         "template_file": None,
         "template_type": None,
@@ -72,10 +115,42 @@ def init_session_state():
         "data_df": None,
         "mapping_config": {},
         "generated_report": None,
+        "template_filename": None,
+        "data_filename": None,
+        "cache_loaded": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    
+    # Load from cache on first run (only once per session)
+    if not st.session_state.cache_loaded:
+        st.session_state.cache_loaded = True
+        
+        # Load cached template (stored as bytes, convert to BytesIO)
+        cached_template_bytes, template_filename = load_from_cache("template_file")
+        if cached_template_bytes is not None:
+            st.session_state.template_file = io.BytesIO(cached_template_bytes)
+            st.session_state.template_filename = template_filename
+            if template_filename:
+                st.session_state.template_type = template_filename.split('.')[-1].lower()
+        
+        # Load cached template structure
+        cached_structure, _ = load_from_cache("template_structure")
+        if cached_structure is not None:
+            st.session_state.template_structure = cached_structure
+        
+        # Load cached data
+        cached_df, data_filename = load_from_cache("data_df")
+        if cached_df is not None:
+            st.session_state.data_df = cached_df
+            st.session_state.data_filename = data_filename
+            st.session_state.data_file = data_filename
+        
+        # Load cached mapping config
+        cached_mapping, _ = load_from_cache("mapping_config")
+        if cached_mapping is not None:
+            st.session_state.mapping_config = cached_mapping
 
 
 def render_sidebar() -> str:
@@ -103,12 +178,14 @@ def render_sidebar() -> str:
         st.subheader("Status")
         
         if st.session_state.template_file:
-            st.success(f"✅ Template: {st.session_state.template_type}")
+            template_name = st.session_state.get('template_filename') or st.session_state.template_type
+            st.success(f"✅ Template: {template_name}")
         else:
             st.warning("⚠️ No template uploaded")
         
         if st.session_state.data_df is not None:
-            st.success(f"✅ Data: {len(st.session_state.data_df)} rows")
+            data_name = st.session_state.get('data_filename') or f"{len(st.session_state.data_df)} rows"
+            st.success(f"✅ Data: {data_name}")
         else:
             st.warning("⚠️ No data loaded")
         
@@ -117,11 +194,20 @@ def render_sidebar() -> str:
         
         st.divider()
         
-        if st.button("🔄 Reset All"):
-            for key in ["template_file", "template_type", "template_structure", 
-                       "data_file", "data_df", "mapping_config", "generated_report"]:
-                st.session_state[key] = None if key != "mapping_config" else {}
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Reset All"):
+                for key in ["template_file", "template_type", "template_structure", 
+                           "data_file", "data_df", "mapping_config", "generated_report",
+                           "template_filename", "data_filename"]:
+                    st.session_state[key] = None if key != "mapping_config" else {}
+                clear_cache()
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache"):
+                clear_cache()
+                st.toast("Cache cleared!", icon="✅")
     
     return page.lower().replace(" ", "_")
 
@@ -151,6 +237,11 @@ def render_upload_page():
         st.markdown("- CSV (.csv)")
         st.markdown("- Excel (.xlsx, .xls)")
     
+    # Show cached data info if available and no new file uploaded
+    if data_file is None and st.session_state.data_df is not None:
+        cached_name = st.session_state.get('data_filename', 'cached data')
+        st.info(f"📁 **Using cached data**: {cached_name} ({len(st.session_state.data_df)} rows)")
+    
     if data_file is not None:
         try:
             # Load data
@@ -159,10 +250,31 @@ def render_upload_page():
             else:
                 df = pd.read_excel(data_file)
             
+            # Try to normalize data (handle messy formats)
+            try:
+                from src.utils.data_normalizer import normalize_dataframe, validate_data_quality, detect_column_type
+                df, column_types = normalize_dataframe(df, auto_detect=True)
+                quality_report = validate_data_quality(df)
+                st.session_state.column_types = column_types
+                st.session_state.quality_report = quality_report
+            except ImportError:
+                column_types = {}
+                quality_report = None
+            
             st.session_state.data_df = df
             st.session_state.data_file = data_file.name
+            st.session_state.data_filename = data_file.name
+            
+            # Save to cache
+            save_to_cache("data_df", df, data_file.name)
             
             st.success(f"✅ Data loaded: {len(df)} rows, {len(df.columns)} columns")
+            
+            # Show data quality warnings if any
+            if quality_report and quality_report.get('warnings'):
+                with st.expander("⚠️ Data Quality Warnings", expanded=True):
+                    for warning in quality_report['warnings']:
+                        st.warning(warning)
             
             # Data preview
             with st.expander("📋 Data Preview", expanded=True):
@@ -180,15 +292,17 @@ def render_upload_page():
                 
                 st.dataframe(df.head(10), use_container_width=True)
                 
-                # Column info
+                # Column info with detected types
                 with st.expander("ℹ️ Column Information"):
-                    col_info = pd.DataFrame({
+                    col_info_data = {
                         'Column': df.columns,
-                        'Type': df.dtypes.astype(str),
+                        'Data Type': df.dtypes.astype(str),
+                        'Detected Type': [column_types.get(col, 'unknown') for col in df.columns] if column_types else ['N/A'] * len(df.columns),
                         'Non-Null': df.count().values,
-                        'Null': df.isnull().sum().values,
+                        'Null %': [f"{df[col].isna().mean():.1%}" for col in df.columns],
                         'Unique': [df[col].nunique() for col in df.columns]
-                    })
+                    }
+                    col_info = pd.DataFrame(col_info_data)
                     st.dataframe(col_info, use_container_width=True)
         
         except Exception as e:
@@ -225,22 +339,40 @@ def render_upload_page():
         st.markdown("- `[field]`")
         st.markdown("- `<field>`")
     
+    # Show cached template info if available and no new file uploaded
+    if template_file is None and st.session_state.template_file is not None:
+        cached_name = st.session_state.get('template_filename', 'cached template')
+        st.info(f"📁 **Using cached template**: {cached_name}")
+    
     if template_file is not None:
         file_ext = template_file.name.split('.')[-1].lower()
-        st.session_state.template_file = template_file
+        
+        # Read file bytes for caching (since UploadedFile can't be pickled directly)
+        template_bytes = template_file.read()
+        template_file.seek(0)  # Reset for later use
+        
+        st.session_state.template_file = io.BytesIO(template_bytes)
         st.session_state.template_type = file_ext
+        st.session_state.template_filename = template_file.name
+        
+        # Save to cache
+        save_to_cache("template_file", template_bytes, template_file.name)
         
         st.success(f"✅ Template uploaded: {template_file.name}")
         
         # Analyze template
         with st.spinner("🔍 Analyzing template structure..."):
-            structure = analyze_template(template_file, file_ext)
+            template_for_analysis = io.BytesIO(template_bytes)
+            structure = analyze_template(template_for_analysis, file_ext)
             st.session_state.template_structure = structure
+            
+            # Cache the structure too
+            save_to_cache("template_structure", structure)
         
         # Display template analysis
         st.markdown('<div class="section-header">Template Analysis</div>', unsafe_allow_html=True)
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric("Format", file_ext.upper())
@@ -252,12 +384,31 @@ def render_upload_page():
         with col3:
             st.metric("Data Fields", structure.get('field_count', 0))
         
+        with col4:
+            mode = structure.get('mode', 'placeholder')
+            mode_label = "📝 Placeholder" if mode == 'placeholder' else "📊 Column"
+            st.metric("Mode", mode_label)
+        
+        # Show mode explanation
+        mode = structure.get('mode', 'placeholder')
+        if mode == 'column':
+            st.info("📊 **Column Mode Detected**: Your template has column headers. Data rows from your input file will be populated into matching columns.")
+        elif structure.get('placeholders'):
+            st.info("📝 **Placeholder Mode Detected**: Your template has placeholders like `{{field}}`. These will be replaced with aggregated values.")
+        
         # Show detected placeholders
         if structure.get('placeholders'):
             with st.expander("🔍 Detected Placeholders", expanded=True):
                 st.markdown("These fields were detected in your template:")
                 for placeholder in structure['placeholders']:
                     st.markdown(f"- `{placeholder['name']}` ({placeholder['type']}) - {placeholder['location']}")
+        
+        # Show detected columns (for column mode)
+        if mode == 'column' and structure.get('template_columns'):
+            with st.expander("📋 Detected Template Columns", expanded=True):
+                st.markdown("These column headers were found in your template:")
+                for col in structure['template_columns']:
+                    st.markdown(f"- `{col['name']}` (Sheet: {col['sheet']}, Column: {col.get('column_letter', 'N/A')})")
         
         # Show preview
         if file_ext in ['xlsx', 'xls', 'csv']:
@@ -269,7 +420,11 @@ def render_upload_page():
 
 def analyze_template(file, file_type: str) -> Dict[str, Any]:
     """
-    Analyze template structure and identify placeholders.
+    Analyze template structure and identify placeholders OR column headers.
+    
+    Supports two modes:
+    1. Placeholder mode: Template has {{field}}, {field}, [field], <field> placeholders
+    2. Column mode: Template has column headers that match data columns (for data population)
     
     Args:
         file: Uploaded file object
@@ -282,7 +437,10 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
         'file_type': file_type,
         'placeholders': [],
         'field_count': 0,
-        'sheet_count': 0
+        'sheet_count': 0,
+        'template_columns': [],  # Column headers found in template
+        'data_start_row': 2,     # Row where data should start (after headers)
+        'mode': 'placeholder'    # 'placeholder' or 'column'
     }
     
     try:
@@ -294,11 +452,26 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
             structure['sheet_count'] = len(wb.sheetnames)
             
             placeholders = []
+            template_columns = []
             
-            # Scan each sheet for placeholders
+            # Scan each sheet for placeholders AND column headers
             for sheet_name in wb.sheetnames:
                 sheet = wb[sheet_name]
                 
+                # Check first row for column headers
+                first_row_values = []
+                for cell in sheet[1]:
+                    if cell.value:
+                        first_row_values.append({
+                            'name': str(cell.value),
+                            'column_letter': cell.column_letter,
+                            'sheet': sheet_name
+                        })
+                
+                if first_row_values:
+                    template_columns.extend(first_row_values)
+                
+                # Also scan for explicit placeholders
                 for row in sheet.iter_rows():
                     for cell in row:
                         if cell.value and isinstance(cell.value, str):
@@ -313,11 +486,22 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
                                 })
             
             structure['placeholders'] = placeholders
-            structure['field_count'] = len(placeholders)
+            structure['template_columns'] = template_columns
+            structure['field_count'] = len(placeholders) if placeholders else len(template_columns)
+            
+            # Determine mode based on what was found
+            if placeholders:
+                structure['mode'] = 'placeholder'
+            elif template_columns:
+                structure['mode'] = 'column'
             
         elif file_type == 'csv':
             df = pd.read_csv(file)
             structure['sheet_count'] = 1
+            
+            # Store all columns as template columns
+            template_columns = [{'name': col, 'column_letter': None, 'sheet': 'main'} for col in df.columns]
+            structure['template_columns'] = template_columns
             
             # Check for placeholder columns
             placeholders = []
@@ -332,7 +516,8 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
                     })
             
             structure['placeholders'] = placeholders
-            structure['field_count'] = len(placeholders)
+            structure['field_count'] = len(placeholders) if placeholders else len(template_columns)
+            structure['mode'] = 'placeholder' if placeholders else 'column'
             
         elif file_type == 'pptx':
             from pptx import Presentation
@@ -411,12 +596,16 @@ def render_data_mapping_page():
     # Mapping configuration
     st.markdown('<div class="section-header">Field Mappings</div>', unsafe_allow_html=True)
     
-    if st.session_state.template_structure and st.session_state.template_structure.get('placeholders'):
+    template_structure = st.session_state.template_structure
+    mode = template_structure.get('mode', 'placeholder') if template_structure else 'placeholder'
+    
+    if mode == 'placeholder' and template_structure.get('placeholders'):
+        # Original placeholder mode
         st.markdown("Map template placeholders to data columns:")
         
         mapping_config = {}
         
-        for placeholder in st.session_state.template_structure['placeholders']:
+        for placeholder in template_structure['placeholders']:
             col1, col2, col3 = st.columns([2, 2, 1])
             
             with col1:
@@ -451,14 +640,91 @@ def render_data_mapping_page():
         st.session_state.mapping_config = mapping_config
         
         if st.button("💾 Save Mapping", type="primary"):
+            save_to_cache("mapping_config", mapping_config)
             st.success("✅ Mapping configuration saved!")
+    
+    elif mode == 'column' and template_structure.get('template_columns'):
+        # Column-based data population mode
+        st.info("📋 **Column Mode**: Template columns will be matched to data columns. Data rows will be populated into the template.")
+        
+        template_cols = template_structure['template_columns']
+        data_cols = list(df.columns)
+        
+        st.markdown("### Auto-Matched Columns")
+        
+        mapping_config = {'_mode': 'column', '_column_mappings': {}}
+        matched_count = 0
+        
+        for tcol in template_cols:
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                st.text_input(
+                    "Template Column",
+                    value=tcol['name'],
+                    disabled=True,
+                    key=f"tcol_{tcol['sheet']}_{tcol['name']}"
+                )
+            
+            with col2:
+                # Auto-match by name (case-insensitive, flexible matching)
+                suggested = find_matching_column(tcol['name'], data_cols)
+                
+                data_column = st.selectbox(
+                    "Data Column",
+                    options=['(skip)'] + data_cols,
+                    index=data_cols.index(suggested) + 1 if suggested else 0,
+                    key=f"dcol_{tcol['sheet']}_{tcol['name']}"
+                )
+                
+                if data_column != '(skip)':
+                    mapping_config['_column_mappings'][tcol['name']] = {
+                        'data_column': data_column,
+                        'column_letter': tcol.get('column_letter'),
+                        'sheet': tcol['sheet']
+                    }
+                    matched_count += 1
+            
+            with col3:
+                if suggested:
+                    st.success("✓ Auto")
+                else:
+                    st.warning("Manual")
+        
+        st.divider()
+        st.metric("Matched Columns", f"{matched_count} / {len(template_cols)}")
+        
+        st.session_state.mapping_config = mapping_config
+        
+        if st.button("💾 Save Column Mapping", type="primary"):
+            save_to_cache("mapping_config", mapping_config)
+            st.success(f"✅ Column mapping saved! {matched_count} columns will be populated.")
+    
     else:
-        st.info("No placeholders detected in template. The entire data will be inserted.")
+        st.info("No placeholders or column headers detected in template. The entire data will be inserted as a new sheet.")
 
 
 def find_matching_column(placeholder: str, columns: List[str]) -> Optional[str]:
-    """Find best matching column for a placeholder."""
-    # Clean placeholder
+    """
+    Find best matching column for a placeholder using fuzzy matching.
+    
+    Handles:
+    - Different naming conventions (snake_case, camelCase, spaces)
+    - Common abbreviations (impr -> impressions, conv -> conversions)
+    - Typos (via fuzzy matching)
+    - Column aliases (spend vs cost, revenue vs sales)
+    """
+    try:
+        from src.utils.data_normalizer import find_best_match, normalize_column_name
+        
+        # Use advanced fuzzy matching
+        match, score = find_best_match(placeholder, list(columns), threshold=0.5)
+        if match:
+            return match
+    except ImportError:
+        pass
+    
+    # Fallback to basic matching
     clean_placeholder = placeholder.strip('{}[]<>').lower().replace('_', ' ').replace('-', ' ')
     
     # Try exact match
@@ -468,8 +734,35 @@ def find_matching_column(placeholder: str, columns: List[str]) -> Optional[str]:
     
     # Try partial match
     for col in columns:
-        if clean_placeholder in col.lower() or col.lower() in clean_placeholder:
+        col_clean = col.lower().replace('_', ' ').replace('-', ' ')
+        if clean_placeholder in col_clean or col_clean in clean_placeholder:
             return col
+    
+    # Try common aliases
+    aliases = {
+        'spend': ['cost', 'amount', 'budget'],
+        'revenue': ['sales', 'income', 'value'],
+        'impressions': ['impr', 'views', 'imp'],
+        'clicks': ['click', 'clk'],
+        'conversions': ['conv', 'converts', 'results'],
+        'ctr': ['click through rate', 'clickthrough'],
+        'cpc': ['cost per click'],
+        'cpa': ['cost per acquisition', 'cost per conversion'],
+        'roas': ['return on ad spend', 'roi'],
+    }
+    
+    for canonical, alias_list in aliases.items():
+        if canonical in clean_placeholder or clean_placeholder in canonical:
+            for col in columns:
+                col_clean = col.lower().replace('_', ' ').replace('-', ' ')
+                if canonical in col_clean:
+                    return col
+        for alias in alias_list:
+            if alias in clean_placeholder or clean_placeholder in alias:
+                for col in columns:
+                    col_clean = col.lower().replace('_', ' ').replace('-', ' ')
+                    if canonical in col_clean or alias in col_clean:
+                        return col
     
     return None
 
@@ -624,24 +917,92 @@ def generate_excel_report(
     include_summary: bool
 ) -> bytes:
     """
-    Generate Excel report by replacing placeholders with actual data.
+    Generate Excel report by replacing placeholders OR populating data rows.
+    
+    Supports two modes:
+    1. Placeholder mode: Replace {{field}} placeholders with aggregated values
+    2. Column mode: Populate data rows into template columns (preserving headers)
     
     Process:
     1. Load template workbook
-    2. Find all placeholders (e.g., {{Total_Spend}})
-    3. Replace with aggregated data from corresponding column
-    4. Preserve all formatting, formulas, and charts
-    5. Add raw data sheet if needed
+    2. Detect mode from mapping_config
+    3. For placeholder mode: replace placeholders with aggregated data
+    4. For column mode: populate data rows starting from row 2
+    5. Preserve all formatting, formulas, and charts
     """
     import openpyxl
     from openpyxl.utils.dataframe import dataframe_to_rows
     from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
     
     # Load template (preserving formatting)
     wb = openpyxl.load_workbook(template_file)
     
-    # Replace placeholders with actual data
+    # Check if we're in column mode
+    if mapping_config.get('_mode') == 'column':
+        # COLUMN MODE: Populate data rows into template
+        column_mappings = mapping_config.get('_column_mappings', {})
+        
+        if column_mappings:
+            # Group mappings by sheet
+            sheets_data = {}
+            for template_col, config in column_mappings.items():
+                sheet_name = config['sheet']
+                if sheet_name not in sheets_data:
+                    sheets_data[sheet_name] = []
+                sheets_data[sheet_name].append({
+                    'template_col': template_col,
+                    'data_col': config['data_column'],
+                    'column_letter': config['column_letter']
+                })
+            
+            # Populate each sheet
+            for sheet_name, col_configs in sheets_data.items():
+                if sheet_name in wb.sheetnames:
+                    sheet = wb[sheet_name]
+                    
+                    # Clear existing data rows (keep header in row 1)
+                    if sheet.max_row > 1:
+                        sheet.delete_rows(2, sheet.max_row)
+                    
+                    # Write data rows starting from row 2
+                    for row_idx, (_, data_row) in enumerate(data_df.iterrows(), start=2):
+                        for col_config in col_configs:
+                            col_letter = col_config['column_letter']
+                            data_col = col_config['data_col']
+                            
+                            if col_letter and data_col in data_df.columns:
+                                value = data_row[data_col]
+                                # Handle NaN values
+                                if pd.isna(value):
+                                    value = ""
+                                cell = sheet[f"{col_letter}{row_idx}"]
+                                cell.value = value
+                    
+                    # Auto-adjust column widths
+                    for column in sheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        for cell in column:
+                            try:
+                                if cell.value and len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 2, 50)
+                        sheet.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save and return
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output.getvalue()
+    
+    # PLACEHOLDER MODE: Replace placeholders with aggregated data
     for placeholder_name, config in mapping_config.items():
+        if placeholder_name.startswith('_'):
+            continue  # Skip internal keys
+            
         data_column = config['data_column']
         location = config['location']
         
