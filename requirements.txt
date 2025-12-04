@@ -57,6 +57,7 @@ plotly
 matplotlib
 seaborn
 kaleido
+scipy
 
 # Documents
 python-pptx
