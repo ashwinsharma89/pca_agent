@@ -535,13 +535,24 @@ class DataValidator:
         
         # Column-level stats
         for col in df.columns:
-            report['columns'][col] = {
-                'dtype': str(df[col].dtype),
-                'null_count': int(df[col].isna().sum()),
-                'null_percentage': float(df[col].isna().sum() / len(df) * 100),
-                'unique_values': int(df[col].nunique()),
-                'sample_values': df[col].dropna().head(3).tolist()
-            }
+            try:
+                col_series = df[col]
+                report['columns'][col] = {
+                    'dtype': str(col_series.dtype),
+                    'null_count': int(col_series.isna().sum()),
+                    'null_percentage': float(col_series.isna().sum() / len(df) * 100) if len(df) > 0 else 0.0,
+                    'unique_values': int(col_series.nunique()),
+                    'sample_values': col_series.dropna().head(3).tolist()
+                }
+            except Exception as e:
+                logger.warning(f"Error generating stats for column '{col}': {e}")
+                report['columns'][col] = {
+                    'dtype': 'unknown',
+                    'null_count': 0,
+                    'null_percentage': 0.0,
+                    'unique_values': 0,
+                    'sample_values': []
+                }
         
         return report
 
@@ -797,5 +808,12 @@ def validate_and_clean_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     Returns:
         Tuple of (cleaned_df, validation_report)
     """
+    # Defensive check: ensure df is actually a DataFrame
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"Expected pandas DataFrame, got {type(df).__name__}")
+    
+    if df.empty:
+        raise ValueError("DataFrame is empty")
+    
     validator = DataValidator()
     return validator.validate_and_clean_dataframe(df)

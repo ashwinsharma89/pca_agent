@@ -6082,5 +6082,17 @@
     "operation": "llm_call",
     "success": true,
     "latency_ms": 15272.8750705719
+  },
+  {
+    "request_id": "900da488",
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "input_tokens": 1303,
+    "output_tokens": 542,
+    "cost_usd": 0.000521,
+    "timestamp": "2025-12-04T09:47:56.943955",
+    "operation": "llm_call",
+    "success": true,
+    "latency_ms": 11664.180755615234
   }
 ]

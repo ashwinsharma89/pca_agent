@@ -627,15 +627,8 @@ def render_data_upload_section(show_header: bool = True):
 
 
 def render_data_upload_page():
-    """Backward-compatible page wrapper that now delegates to home workflow."""
+    """Backward compatible page wrapper (unused)."""
     render_data_upload_section(show_header=True)
-    st.info("Data upload now lives on the Home page alongside quick stats and analysis entry points.")
-
-
-def render_analysis_page():
-    """Render AI analysis page with configurable RAG support."""
-    st.markdown('<div class="main-header">🤖 AI Analysis</div>', unsafe_allow_html=True)
-    
     if st.session_state.df is None:
         st.warning("⚠️ Please upload data first")
         return
@@ -683,26 +676,33 @@ def render_analysis_page():
     if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         with st.spinner("🔍 Analyzing your campaign data..."):
             try:
+                # Initialize analytics expert if needed
                 if st.session_state.analytics_expert is None:
                     st.session_state.analytics_expert = MediaAnalyticsExpert()
                 
                 analytics = st.session_state.analytics_expert
                 
+                # Run analysis
                 if use_rag_summary:
                     st.info("🧠 Using RAG-Enhanced Analysis...")
                 
+                # Use analyze_all method which supports RAG summaries
                 results = analytics.analyze_all(
                     st.session_state.df,
                     use_parallel=True
                 )
                 
+                # If RAG summary is enabled, generate RAG-enhanced executive summary
                 if use_rag_summary and results:
                     try:
+                        # Generate RAG-enhanced executive summary
                         rag_summary = analytics._generate_executive_summary_with_rag(
                             results.get('metrics', {}),
                             results.get('insights', []),
                             results.get('recommendations', [])
                         )
+                        
+                        # Replace standard summary with RAG summary
                         if rag_summary:
                             results['executive_summary'] = rag_summary
                             st.success("✅ RAG-enhanced summary generated!")
@@ -713,7 +713,10 @@ def render_analysis_page():
                 if results:
                     st.session_state.analysis_data = results
                     st.session_state.analysis_complete = True
+                    
+                    # Save to history
                     AnalysisHistoryComponent.save_to_history(results)
+                    
                     st.success("✅ Analysis complete!")
                     st.rerun()
                 else:
@@ -723,10 +726,10 @@ def render_analysis_page():
                 st.error(f"❌ Error during analysis: {str(e)}")
                 logger.error(f"Analysis error: {e}", exc_info=True)
     
+    # Display results
     if st.session_state.analysis_complete and st.session_state.analysis_data:
         st.divider()
         display_rag_analysis_results(st.session_state.analysis_data)
-
 
 def display_rag_analysis_results(results: Dict[str, Any]):
     """Display RAG-enhanced analysis results."""
