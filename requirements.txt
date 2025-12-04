@@ -33,6 +33,7 @@ numpy
 python-dateutil
 duckdb
 openpyxl
+scipy
 
 # Security
 pyjwt
