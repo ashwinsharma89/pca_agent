@@ -16,6 +16,7 @@ from datetime import datetime
 import io
 import pickle
 import hashlib
+import logging
 
 import streamlit as st
 import pandas as pd
@@ -28,6 +29,44 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 load_dotenv()
+
+# =============================================================================
+# LOGGING SETUP
+# =============================================================================
+
+# Create logs directory
+LOG_DIR = Path(current_dir) / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+# Configure logging
+log_file = LOG_DIR / f"reporting_{datetime.now().strftime('%Y-%m-%d')}.log"
+
+# Create formatter
+log_formatter = logging.Formatter(
+    '%(asctime)s | %(levelname)-8s | %(funcName)s:%(lineno)d | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# File handler
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setFormatter(log_formatter)
+file_handler.setLevel(logging.DEBUG)
+
+# Console handler (for Streamlit terminal)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+console_handler.setLevel(logging.INFO)
+
+# Create logger
+logger = logging.getLogger('reporting')
+logger.setLevel(logging.DEBUG)
+logger.handlers = []  # Clear existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+logger.info("=" * 60)
+logger.info("REPORTING MODULE STARTED")
+logger.info("=" * 60)
 
 # Cache directory for persisting uploaded files
 CACHE_DIR = Path(current_dir) / ".reporting_cache"
@@ -79,8 +118,9 @@ def save_to_cache(key: str, data: Any, filename: str = None):
         cache_path = CACHE_DIR / f"{key}.pkl"
         with open(cache_path, 'wb') as f:
             pickle.dump(cache_data, f)
+        logger.debug(f"Cache saved: {key} (filename: {filename})")
     except Exception as e:
-        print(f"Cache save error: {e}")
+        logger.error(f"Cache save error for {key}: {e}")
 
 
 def load_from_cache(key: str) -> Tuple[Any, Optional[str]]:
@@ -90,9 +130,10 @@ def load_from_cache(key: str) -> Tuple[Any, Optional[str]]:
         if cache_path.exists():
             with open(cache_path, 'rb') as f:
                 cache_data = pickle.load(f)
+                logger.debug(f"Cache loaded: {key} (filename: {cache_data.get('filename')})")
                 return cache_data.get('data'), cache_data.get('filename')
     except Exception as e:
-        print(f"Cache load error: {e}")
+        logger.error(f"Cache load error for {key}: {e}")
     return None, None
 
 
@@ -101,8 +142,9 @@ def clear_cache():
     try:
         for cache_file in CACHE_DIR.glob("*.pkl"):
             cache_file.unlink()
+        logger.info("Cache cleared")
     except Exception as e:
-        print(f"Cache clear error: {e}")
+        logger.error(f"Cache clear error: {e}")
 
 
 def init_session_state():
@@ -433,6 +475,8 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
     Returns:
         Dictionary with template structure information
     """
+    logger.info(f"Analyzing template (type: {file_type})")
+    
     structure = {
         'file_type': file_type,
         'placeholders': [],
@@ -450,6 +494,7 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
             # Load workbook
             wb = openpyxl.load_workbook(file, data_only=False)
             structure['sheet_count'] = len(wb.sheetnames)
+            logger.debug(f"Loaded workbook with {len(wb.sheetnames)} sheets: {wb.sheetnames}")
             
             placeholders = []
             template_columns = []
@@ -458,25 +503,48 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
             for sheet_name in wb.sheetnames:
                 sheet = wb[sheet_name]
                 
-                # Check first row for column headers
-                first_row_values = []
-                for cell in sheet[1]:
+                # Find header row (row with most non-empty cells in first 20 rows)
+                header_row = 1
+                max_filled = 0
+                for row_idx in range(1, min(21, sheet.max_row + 1)):
+                    filled = sum(1 for cell in sheet[row_idx] if cell.value is not None)
+                    if filled > max_filled:
+                        max_filled = filled
+                        header_row = row_idx
+                
+                # Extract column headers from detected header row
+                from openpyxl.utils import get_column_letter as gcl
+                header_row_values = []
+                for cell in sheet[header_row]:
+                    # Skip merged cells
+                    if not hasattr(cell, 'column') or cell.column is None:
+                        continue
                     if cell.value:
-                        first_row_values.append({
+                        header_row_values.append({
                             'name': str(cell.value),
-                            'column_letter': cell.column_letter,
-                            'sheet': sheet_name
+                            'column_letter': gcl(cell.column),
+                            'sheet': sheet_name,
+                            'header_row': header_row
                         })
                 
-                if first_row_values:
-                    template_columns.extend(first_row_values)
+                if header_row_values:
+                    template_columns.extend(header_row_values)
+                    # Store the data start row for this sheet
+                    structure[f'data_start_row_{sheet_name}'] = header_row + 1
                 
-                # Also scan for explicit placeholders
+                # Also scan for explicit placeholders (but NOT formulas)
+                import re
+                placeholder_pattern = re.compile(r'\{\{[^}]+\}\}|\[\[[^\]]+\]\]|<<[^>]+>>')
+                
                 for row in sheet.iter_rows():
                     for cell in row:
                         if cell.value and isinstance(cell.value, str):
-                            # Detect placeholder patterns: {{field}}, {field}, [field], <field>
-                            if any(pattern in str(cell.value) for pattern in ['{{', '{', '[', '<']):
+                            cell_str = str(cell.value)
+                            # Skip formulas
+                            if cell_str.startswith('='):
+                                continue
+                            # Only detect explicit placeholder patterns: {{field}}, [[field]], <<field>>
+                            if placeholder_pattern.search(cell_str):
                                 placeholders.append({
                                     'name': cell.value,
                                     'type': 'text',
@@ -492,8 +560,14 @@ def analyze_template(file, file_type: str) -> Dict[str, Any]:
             # Determine mode based on what was found
             if placeholders:
                 structure['mode'] = 'placeholder'
+                logger.info(f"Template mode: PLACEHOLDER ({len(placeholders)} placeholders found)")
+                for p in placeholders[:5]:
+                    logger.debug(f"  Placeholder: {p['name']} at {p['location']}")
             elif template_columns:
                 structure['mode'] = 'column'
+                logger.info(f"Template mode: COLUMN ({len(template_columns)} columns found)")
+                for c in template_columns[:10]:
+                    logger.debug(f"  Column: {c['name']} ({c['column_letter']}) in {c['sheet']}")
             
         elif file_type == 'csv':
             df = pd.read_csv(file)
@@ -681,7 +755,8 @@ def render_data_mapping_page():
                     mapping_config['_column_mappings'][tcol['name']] = {
                         'data_column': data_column,
                         'column_letter': tcol.get('column_letter'),
-                        'sheet': tcol['sheet']
+                        'sheet': tcol['sheet'],
+                        'header_row': tcol.get('header_row', 1)
                     }
                     matched_count += 1
             
@@ -767,6 +842,91 @@ def find_matching_column(placeholder: str, columns: List[str]) -> Optional[str]:
     return None
 
 
+def apply_date_grouping(df: pd.DataFrame, grouping: str, week_start: str = "Monday") -> pd.DataFrame:
+    """
+    Apply date grouping to aggregate data by week or month.
+    
+    Args:
+        df: DataFrame with a date column
+        grouping: "Weekly (Week Start)" or "Monthly (Month Start)"
+        week_start: "Monday" or "Sunday"
+    
+    Returns:
+        Aggregated DataFrame with dates converted to period start dates
+    """
+    # Find date column
+    date_col = None
+    for col in df.columns:
+        col_lower = col.lower()
+        if col_lower in ['date', 'day', 'report_date', 'campaign_date']:
+            date_col = col
+            break
+        if 'date' in col_lower:
+            date_col = col
+            break
+    
+    if date_col is None:
+        return df  # No date column found, return as-is
+    
+    # Make a copy
+    result_df = df.copy()
+    
+    # Convert to datetime
+    result_df[date_col] = pd.to_datetime(result_df[date_col], errors='coerce')
+    
+    # Identify numeric columns for aggregation
+    numeric_cols = result_df.select_dtypes(include=['number']).columns.tolist()
+    
+    # Identify grouping columns (non-numeric, non-date)
+    group_cols = []
+    for col in result_df.columns:
+        if col == date_col:
+            continue
+        if col not in numeric_cols:
+            # Check if it's a categorical/text column worth grouping by
+            if result_df[col].nunique() < 50:  # Reasonable number of unique values
+                group_cols.append(col)
+    
+    if "Weekly" in grouping:
+        # Convert to week start date
+        # Monday = 0, Sunday = 6
+        week_start_offset = 0 if week_start == "Monday" else 6
+        
+        # Get the start of the week for each date
+        result_df['_period_start'] = result_df[date_col].apply(
+            lambda x: x - pd.Timedelta(days=(x.weekday() - week_start_offset) % 7) if pd.notna(x) else x
+        )
+        
+    elif "Monthly" in grouping:
+        # Convert to month start date
+        result_df['_period_start'] = result_df[date_col].apply(
+            lambda x: x.replace(day=1) if pd.notna(x) else x
+        )
+    else:
+        return df  # No grouping needed
+    
+    # Replace date column with period start
+    result_df[date_col] = result_df['_period_start']
+    result_df = result_df.drop(columns=['_period_start'])
+    
+    # Aggregate by period and group columns
+    agg_cols = [date_col] + group_cols
+    
+    # Build aggregation dict
+    agg_dict = {}
+    for col in numeric_cols:
+        agg_dict[col] = 'sum'
+    
+    # Group and aggregate
+    if agg_dict:
+        result_df = result_df.groupby(agg_cols, as_index=False).agg(agg_dict)
+    
+    # Sort by date
+    result_df = result_df.sort_values(date_col)
+    
+    return result_df
+
+
 def render_generate_report_page():
     """Render report generation page."""
     st.markdown('<div class="main-header">📊 Generate Report</div>', unsafe_allow_html=True)
@@ -820,6 +980,23 @@ def render_generate_report_page():
             help="How to aggregate data if multiple rows match"
         )
     
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        date_grouping = st.selectbox(
+            "Date Grouping",
+            options=["Daily (No Change)", "Weekly (Week Start)", "Monthly (Month Start)"],
+            help="Aggregate data by week or month. Dates will be converted to period start dates."
+        )
+    
+    with col4:
+        week_start_day = st.selectbox(
+            "Week Starts On",
+            options=["Monday", "Sunday"],
+            help="Which day should be considered the start of the week",
+            disabled=date_grouping != "Weekly (Week Start)"
+        )
+    
     include_charts = st.checkbox("Include Charts", value=True, help="Generate charts from data")
     include_summary = st.checkbox("Include Summary Sheet", value=True, help="Add executive summary")
     
@@ -829,10 +1006,21 @@ def render_generate_report_page():
     if st.button("🚀 Generate Report", type="primary", use_container_width=True):
         with st.spinner("📊 Generating report..."):
             try:
+                # Apply date grouping if needed
+                working_df = st.session_state.data_df.copy()
+                
+                if date_grouping != "Daily (No Change)":
+                    working_df = apply_date_grouping(
+                        working_df, 
+                        date_grouping, 
+                        week_start_day
+                    )
+                    st.info(f"📅 Data grouped by {date_grouping.split('(')[0].strip()}: {len(working_df)} rows")
+                
                 generated_file = generate_report(
                     template_file=st.session_state.template_file,
                     template_type=st.session_state.template_type,
-                    data_df=st.session_state.data_df,
+                    data_df=working_df,
                     mapping_config=st.session_state.mapping_config,
                     report_name=report_name,
                     aggregation=aggregation_method.lower(),
@@ -844,6 +1032,7 @@ def render_generate_report_page():
                 st.success("✅ Report generated successfully!")
                 
             except Exception as e:
+                logger.error(f"Error generating report: {str(e)}", exc_info=True)
                 st.error(f"❌ Error generating report: {str(e)}")
     
     # Download generated report
@@ -894,6 +1083,15 @@ def generate_report(
     Returns:
         Generated report as bytes
     """
+    logger.info("=" * 50)
+    logger.info(f"GENERATING REPORT: {report_name}")
+    logger.info(f"  Template type: {template_type}")
+    logger.info(f"  Data rows: {len(data_df)}")
+    logger.info(f"  Data columns: {list(data_df.columns)}")
+    logger.info(f"  Mapping mode: {mapping_config.get('_mode', 'placeholder')}")
+    logger.info(f"  Aggregation: {aggregation}")
+    logger.info("=" * 50)
+    
     if template_type in ['xlsx', 'xls']:
         return generate_excel_report(
             template_file, data_df, mapping_config, aggregation, include_charts, include_summary
@@ -923,25 +1121,124 @@ def generate_excel_report(
     1. Placeholder mode: Replace {{field}} placeholders with aggregated values
     2. Column mode: Populate data rows into template columns (preserving headers)
     
+    Calculated Fields (auto-computed):
+    - CTR: Clicks / Impressions * 100
+    - CPC: Spend / Clicks
+    - CPA: Spend / Conversions
+    - CPM: Spend / Impressions * 1000
+    - ROAS: Revenue / Spend
+    - Conversion Rate: Conversions / Clicks * 100
+    
     Process:
     1. Load template workbook
     2. Detect mode from mapping_config
     3. For placeholder mode: replace placeholders with aggregated data
     4. For column mode: populate data rows starting from row 2
-    5. Preserve all formatting, formulas, and charts
+    5. Auto-calculate derived metrics (CTR, CPC, CPA, ROAS, etc.)
+    6. Preserve all formatting, formulas, and charts
     """
     import openpyxl
     from openpyxl.utils.dataframe import dataframe_to_rows
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Font, PatternFill, numbers
     from openpyxl.utils import get_column_letter
     
+    # Define calculated fields and their formulas
+    # Each entry: (field_aliases, numerator_aliases, denominator_aliases, multiplier, format)
+    CALCULATED_FIELDS = {
+        'ctr': {
+            'aliases': ['ctr', 'click_through_rate', 'click through rate', 'clickthroughrate'],
+            'numerator': ['clicks', 'click', 'total_clicks'],
+            'denominator': ['impressions', 'impr', 'impression', 'total_impressions'],
+            'multiplier': 100,
+            'format': '0.00%',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom}*100)'
+        },
+        'cpc': {
+            'aliases': ['cpc', 'cost_per_click', 'cost per click', 'costperclick', 'avg_cpc', 'average_cpc'],
+            'numerator': ['spend', 'cost', 'spend_usd', 'cost_usd', 'total_spend', 'amount_spent'],
+            'denominator': ['clicks', 'click', 'total_clicks'],
+            'multiplier': 1,
+            'format': '$#,##0.00',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom})'
+        },
+        'cpa': {
+            'aliases': ['cpa', 'cost_per_acquisition', 'cost per acquisition', 'cost_per_conversion', 
+                       'cost per conversion', 'costperacquisition', 'costperconversion', 'cpl', 'cost_per_lead'],
+            'numerator': ['spend', 'cost', 'spend_usd', 'cost_usd', 'total_spend', 'amount_spent'],
+            'denominator': ['conversions', 'conversion', 'conv', 'total_conversions', 'leads', 'acquisitions'],
+            'multiplier': 1,
+            'format': '$#,##0.00',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom})'
+        },
+        'cpm': {
+            'aliases': ['cpm', 'cost_per_mille', 'cost per mille', 'cost_per_thousand', 'costpermille'],
+            'numerator': ['spend', 'cost', 'spend_usd', 'cost_usd', 'total_spend', 'amount_spent'],
+            'denominator': ['impressions', 'impr', 'impression', 'total_impressions'],
+            'multiplier': 1000,
+            'format': '$#,##0.00',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom}*1000)'
+        },
+        'roas': {
+            'aliases': ['roas', 'return_on_ad_spend', 'return on ad spend', 'returnonadspend'],
+            'numerator': ['revenue', 'revenue_usd', 'total_revenue', 'sales', 'value'],
+            'denominator': ['spend', 'cost', 'spend_usd', 'cost_usd', 'total_spend', 'amount_spent'],
+            'multiplier': 1,
+            'format': '0.00',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom})'
+        },
+        'conversion_rate': {
+            'aliases': ['conversion_rate', 'conv_rate', 'cvr', 'cr'],
+            'numerator': ['conversions', 'conversion', 'conv', 'total_conversions'],
+            'denominator': ['clicks', 'click', 'total_clicks'],
+            'multiplier': 100,
+            'format': '0.00%',
+            'formula_template': '=IF({denom}=0,0,{numer}/{denom}*100)'
+        }
+    }
+    
+    def normalize_field_name(name: str) -> str:
+        """Normalize field name for matching."""
+        return name.lower().replace('_', '').replace(' ', '').replace('-', '')
+    
+    def find_calculated_field(template_col: str) -> Optional[Dict]:
+        """Check if a template column is a calculated field."""
+        norm_col = normalize_field_name(template_col)
+        for field_key, field_def in CALCULATED_FIELDS.items():
+            for alias in field_def['aliases']:
+                if normalize_field_name(alias) == norm_col:
+                    return {'key': field_key, **field_def}
+        return None
+    
+    def find_source_column(aliases: List[str], available_cols: List[str]) -> Optional[str]:
+        """Find a source column matching any of the aliases."""
+        for alias in aliases:
+            norm_alias = normalize_field_name(alias)
+            for col in available_cols:
+                if normalize_field_name(col) == norm_alias:
+                    return col
+        # Partial match
+        for alias in aliases:
+            norm_alias = normalize_field_name(alias)
+            for col in available_cols:
+                norm_col = normalize_field_name(col)
+                if norm_alias in norm_col or norm_col in norm_alias:
+                    return col
+        return None
+    
     # Load template (preserving formatting)
+    logger.debug("Loading template workbook...")
     wb = openpyxl.load_workbook(template_file)
+    logger.debug(f"Template loaded. Sheets: {wb.sheetnames}")
     
     # Check if we're in column mode
     if mapping_config.get('_mode') == 'column':
         # COLUMN MODE: Populate data rows into template
+        logger.info("Processing in COLUMN MODE")
         column_mappings = mapping_config.get('_column_mappings', {})
+        logger.info(f"Column mappings: {len(column_mappings)} columns")
+        
+        for col_name, col_config in column_mappings.items():
+            logger.debug(f"  Mapping: {col_name} -> {col_config.get('data_column')} (col {col_config.get('column_letter')})")
         
         if column_mappings:
             # Group mappings by sheet
@@ -949,24 +1246,109 @@ def generate_excel_report(
             for template_col, config in column_mappings.items():
                 sheet_name = config['sheet']
                 if sheet_name not in sheets_data:
-                    sheets_data[sheet_name] = []
-                sheets_data[sheet_name].append({
+                    sheets_data[sheet_name] = {
+                        'columns': [],
+                        'header_row': config.get('header_row', 1)
+                    }
+                sheets_data[sheet_name]['columns'].append({
                     'template_col': template_col,
                     'data_col': config['data_column'],
                     'column_letter': config['column_letter']
                 })
             
+            logger.info(f"Processing {len(sheets_data)} sheet(s)")
+            
             # Populate each sheet
-            for sheet_name, col_configs in sheets_data.items():
+            for sheet_name, sheet_config in sheets_data.items():
+                logger.info(f"Processing sheet: {sheet_name}")
                 if sheet_name in wb.sheetnames:
                     sheet = wb[sheet_name]
+                    col_configs = sheet_config['columns']
                     
-                    # Clear existing data rows (keep header in row 1)
-                    if sheet.max_row > 1:
-                        sheet.delete_rows(2, sheet.max_row)
+                    # Detect header row by finding row with most filled cells
+                    header_row = 1
+                    max_filled = 0
+                    for row_idx in range(1, min(21, sheet.max_row + 1)):
+                        filled = sum(1 for cell in sheet[row_idx] if cell.value is not None)
+                        if filled > max_filled:
+                            max_filled = filled
+                            header_row = row_idx
                     
-                    # Write data rows starting from row 2
-                    for row_idx, (_, data_row) in enumerate(data_df.iterrows(), start=2):
+                    data_start_row = header_row + 1
+                    logger.debug(f"  Header row: {header_row}, Data starts at row: {data_start_row}")
+                    
+                    # Build column letter mapping for calculated fields
+                    col_letter_map = {}  # data_col -> column_letter
+                    for col_config in col_configs:
+                        if col_config['data_col']:
+                            col_letter_map[col_config['data_col'].lower()] = col_config['column_letter']
+                    
+                    # Also scan header row for unmapped columns (for calculated field references)
+                    for cell in sheet[header_row]:
+                        # Skip merged cells (use cell.column instead of cell.column_letter)
+                        if not hasattr(cell, 'column') or cell.column is None:
+                            continue
+                        if cell.value:
+                            cell_col_letter = get_column_letter(cell.column)
+                            header_name = str(cell.value).lower().replace('_', '').replace(' ', '')
+                            # Map common metric names to their column letters
+                            for alias_group in [
+                                (['impressions', 'impr'], 'impressions'),
+                                (['clicks', 'click'], 'clicks'),
+                                (['spend', 'cost', 'spendusd'], 'spend'),
+                                (['conversions', 'conv'], 'conversions'),
+                                (['revenue', 'revenueusd'], 'revenue'),
+                            ]:
+                                if header_name in [a.replace('_', '') for a in alias_group[0]]:
+                                    col_letter_map[alias_group[1]] = cell_col_letter
+                    
+                    # Identify calculated field columns in template
+                    calculated_cols = []
+                    for cell in sheet[header_row]:
+                        # Skip merged cells
+                        if not hasattr(cell, 'column') or cell.column is None:
+                            continue
+                        if cell.value:
+                            cell_col_letter = get_column_letter(cell.column)
+                            calc_field = find_calculated_field(str(cell.value))
+                            if calc_field:
+                                # Find source columns for this calculated field
+                                numer_col = find_source_column(calc_field['numerator'], list(data_df.columns))
+                                denom_col = find_source_column(calc_field['denominator'], list(data_df.columns))
+                                
+                                calculated_cols.append({
+                                    'column_letter': cell_col_letter,
+                                    'field': calc_field,
+                                    'numer_data_col': numer_col,
+                                    'denom_data_col': denom_col,
+                                    'numer_letter': col_letter_map.get(numer_col.lower() if numer_col else '', None),
+                                    'denom_letter': col_letter_map.get(denom_col.lower() if denom_col else '', None),
+                                })
+                    
+                    if calculated_cols:
+                        logger.info(f"  Calculated fields detected: {len(calculated_cols)}")
+                        for cc in calculated_cols:
+                            logger.debug(f"    {cc['field']['key']}: {cc['numer_data_col']}/{cc['denom_data_col']} -> col {cc['column_letter']}")
+                    
+                    # Clear existing data rows (keep header row intact)
+                    if sheet.max_row >= data_start_row:
+                        rows_to_delete = sheet.max_row - data_start_row + 1
+                        logger.debug(f"  Clearing {rows_to_delete} existing data rows")
+                        sheet.delete_rows(data_start_row, rows_to_delete)
+                    
+                    # Write data rows starting after header
+                    logger.info(f"  Writing {len(data_df)} data rows starting at row {data_start_row}")
+                    
+                    # Log the actual column configs being used
+                    logger.debug(f"  Column configs for writing:")
+                    for cc in col_configs:
+                        logger.debug(f"    {cc['template_col']} -> {cc['data_col']} (col {cc['column_letter']})")
+                    
+                    # Track what's actually written
+                    write_stats = {}
+                    
+                    for row_idx, (_, data_row) in enumerate(data_df.iterrows(), start=data_start_row):
+                        # Write regular mapped columns
                         for col_config in col_configs:
                             col_letter = col_config['column_letter']
                             data_col = col_config['data_col']
@@ -976,13 +1358,63 @@ def generate_excel_report(
                                 # Handle NaN values
                                 if pd.isna(value):
                                     value = ""
+                                # Handle datetime
+                                if hasattr(value, 'strftime'):
+                                    value = value.strftime('%Y-%m-%d')
                                 cell = sheet[f"{col_letter}{row_idx}"]
                                 cell.value = value
+                                
+                                # Track first row writes for logging
+                                if row_idx == data_start_row:
+                                    write_stats[col_letter] = {'col': data_col, 'value': str(value)[:30]}
+                            elif row_idx == data_start_row:
+                                logger.warning(f"    Skipping {col_config['template_col']}: col_letter={col_letter}, data_col={data_col} in columns={data_col in data_df.columns}")
+                        
+                        # Write calculated fields for this row
+                        for calc_col in calculated_cols:
+                            col_letter = calc_col['column_letter']
+                            field = calc_col['field']
+                            numer_col = calc_col['numer_data_col']
+                            denom_col = calc_col['denom_data_col']
+                            numer_letter = calc_col['numer_letter']
+                            denom_letter = calc_col['denom_letter']
+                            
+                            cell = sheet[f"{col_letter}{row_idx}"]
+                            
+                            # Option 1: Use Excel formula if we have column letters
+                            if numer_letter and denom_letter:
+                                formula = field['formula_template'].format(
+                                    numer=f"{numer_letter}{row_idx}",
+                                    denom=f"{denom_letter}{row_idx}"
+                                )
+                                cell.value = formula
+                            # Option 2: Calculate value directly from data
+                            elif numer_col and denom_col and numer_col in data_df.columns and denom_col in data_df.columns:
+                                numer_val = data_row[numer_col]
+                                denom_val = data_row[denom_col]
+                                
+                                if pd.notna(numer_val) and pd.notna(denom_val) and denom_val != 0:
+                                    calc_value = (numer_val / denom_val) * field['multiplier']
+                                    cell.value = round(calc_value, 4)
+                                else:
+                                    cell.value = 0
+                            else:
+                                cell.value = ""  # Cannot calculate
+                    
+                    # Log what was written in first row
+                    if write_stats:
+                        logger.debug(f"  First row writes:")
+                        for col_letter, info in sorted(write_stats.items()):
+                            logger.debug(f"    {col_letter}: {info['col']} = {info['value']}")
                     
                     # Auto-adjust column widths
                     for column in sheet.columns:
                         max_length = 0
-                        column_letter = column[0].column_letter
+                        first_cell = column[0]
+                        # Skip merged cells
+                        if not hasattr(first_cell, 'column') or first_cell.column is None:
+                            continue
+                        col_letter = get_column_letter(first_cell.column)
                         for cell in column:
                             try:
                                 if cell.value and len(str(cell.value)) > max_length:
@@ -990,15 +1422,18 @@ def generate_excel_report(
                             except:
                                 pass
                         adjusted_width = min(max_length + 2, 50)
-                        sheet.column_dimensions[column_letter].width = adjusted_width
+                        sheet.column_dimensions[col_letter].width = adjusted_width
         
         # Save and return
+        logger.info("Column mode processing complete. Saving workbook...")
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
+        logger.info(f"Report generated successfully ({len(output.getvalue())} bytes)")
         return output.getvalue()
     
     # PLACEHOLDER MODE: Replace placeholders with aggregated data
+    logger.info("Processing in PLACEHOLDER MODE")
     for placeholder_name, config in mapping_config.items():
         if placeholder_name.startswith('_'):
             continue  # Skip internal keys
@@ -1067,7 +1502,11 @@ def generate_excel_report(
         # Auto-adjust column widths
         for column in data_sheet.columns:
             max_length = 0
-            column_letter = column[0].column_letter
+            first_cell = column[0]
+            # Skip merged cells
+            if not hasattr(first_cell, 'column') or first_cell.column is None:
+                continue
+            col_letter = get_column_letter(first_cell.column)
             for cell in column:
                 try:
                     if len(str(cell.value)) > max_length:
@@ -1075,7 +1514,7 @@ def generate_excel_report(
                 except:
                     pass
             adjusted_width = min(max_length + 2, 50)
-            data_sheet.column_dimensions[column_letter].width = adjusted_width
+            data_sheet.column_dimensions[col_letter].width = adjusted_width
     
     # Save to bytes
     output = io.BytesIO()

@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     )
     
     # API Keys
-    openai_api_key: str = Field(..., description="OpenAI API key")
+    openai_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenAI API key (optional for local testing)",
+    )
     anthropic_api_key: Optional[str] = Field(None, description="Anthropic API key")
     
     # LangSmith (Optional)
@@ -118,3 +121,11 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+if settings.openai_api_key in (None, ""):
+    import warnings
+
+    warnings.warn(
+        "OpenAI API key not set. Features requiring OpenAI will be disabled until the key is provided.",
+        RuntimeWarning,
+    )
