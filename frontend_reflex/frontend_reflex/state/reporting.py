@@ -1,6 +1,6 @@
 import reflex as rx
 from typing import Dict, List, Any, Optional
-from .data import DataState
+from .predictive import PredictiveState
 import pandas as pd
 import io
 import os
@@ -13,7 +13,7 @@ except ImportError:
     BACKEND_AVAILABLE = False
     print("Warning: Reporting backend modules not found.")
 
-class ReportingState(DataState):
+class ReportingState(PredictiveState):
     """State for Automated Reporting."""
     
     # Uploads
@@ -108,7 +108,7 @@ class ReportingState(DataState):
         finally:
             self.is_generating = False
             
-    def reset(self):
+    def reset_reporting(self):
         self.template_filename = ""
         self.template_file_content = None
         self.template_structure = {}

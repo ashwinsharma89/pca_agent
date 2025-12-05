@@ -40,7 +40,7 @@ def diagnostics_content():
                                     rx.text("Data Insights", weight="bold"),
                                     rx.foreach(
                                         State.causal_insights,
-                                        lambda x: rx.alert(x, icon="info")
+                                        lambda x: rx.callout(x)
                                     ),
                                     width="100%"
                                 ),
@@ -48,7 +48,7 @@ def diagnostics_content():
                                     rx.text("Knowledge Base Recommendations (RAG)", weight="bold", color_scheme="violet"),
                                     rx.foreach(
                                         State.causal_recommendations,
-                                        lambda x: rx.alert(x, icon="check", color_scheme="violet")
+                                        lambda x: rx.callout(x, color_scheme="violet")
                                     ),
                                     width="100%"
                                 ),

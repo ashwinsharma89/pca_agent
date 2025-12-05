@@ -1,6 +1,6 @@
 import reflex as rx
 from typing import Dict, List, Any, Optional
-from .data import DataState
+from .diagnostics import DiagnosticsState
 import pandas as pd
 import os
 
@@ -16,7 +16,7 @@ except ImportError:
     BACKEND_AVAILABLE = False
     print("Warning: Predictive backend modules not found.")
 
-class PredictiveState(DataState):
+class PredictiveState(DiagnosticsState):
     """State for Predictive Analytics."""
     
     # Campaign Predictor Inputs
